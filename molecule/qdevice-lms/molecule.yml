@@ -1,0 +1,100 @@
+---
+dependency:
+  name: shell
+  command: sh -c 'ansible-galaxy collection install -r "$MOLECULE_SCENARIO_DIRECTORY/collections.yml"'
+driver:
+  name: docker
+# Three nodes and a qnetd host: last man standing
+platforms:
+  - name: corosync-a-${MOLECULE_DISTRO:-debian13}
+    hostname: corosync-a
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    networks:
+      - name: corosync-qdevice-lms-${MOLECULE_DISTRO:-debian13}
+    groups:
+      - nodes
+  - name: corosync-b-${MOLECULE_DISTRO:-debian13}
+    hostname: corosync-b
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    networks:
+      - name: corosync-qdevice-lms-${MOLECULE_DISTRO:-debian13}
+    groups:
+      - nodes
+  - name: corosync-c-${MOLECULE_DISTRO:-debian13}
+    hostname: corosync-c
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    networks:
+      - name: corosync-qdevice-lms-${MOLECULE_DISTRO:-debian13}
+    groups:
+      - nodes
+  - name: qnetd-${MOLECULE_DISTRO:-debian13}
+    hostname: qnetd
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    networks:
+      - name: corosync-qdevice-lms-${MOLECULE_DISTRO:-debian13}
+    groups:
+      - qnetd
+provisioner:
+  name: ansible
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: ../shared/converge.yml
+    side_effect: side_effect/playbook.yml
+    verify: verify/playbook.yml
+  inventory:
+    group_vars:
+      all:
+        ansible_become: false
+      nodes:
+        molecule_nodeid: "{{ groups['nodes'].index(inventory_hostname) + 1 }}"
+        corosync_cluster_name: molecule
+        corosync_qdevice: true
+        # Its container name: Docker's DNS resolves it on the scenario's network
+        corosync_qdevice_host: "{{ groups['qnetd'] | first }}"
+        corosync_qdevice_algorithm: lms
+        corosync_nodes: >-
+          {{ groups['nodes'] | map('extract', hostvars) | map(attribute='molecule_node') | list }}
+        molecule_node:
+          name: "{{ inventory_hostname.split('-')[:2] | join('-') }}"
+          host: "{{ inventory_hostname }}"
+          nodeid: "{{ molecule_nodeid | int }}"
+          addrs:
+            - "{{ ansible_facts.default_ipv4.address }}"
+verifier:
+  name: ansible
+scenario:
+  name: qdevice-lms
+  test_sequence:
+    - dependency
+    - destroy
+    - create
+    - prepare
+    - check
+    - converge
+    - verify
+    - idempotence
+    - destroy

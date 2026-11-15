@@ -1,0 +1,12 @@
+---
+- name: Verify the cluster and its quorum device
+  hosts: nodes
+  gather_facts: false
+  vars:
+    molecule_votes: 3
+  tasks:
+    - name: Quorate
+      ansible.builtin.include_tasks: ../../shared/quorate.yml
+
+    - name: The quorum device
+      ansible.builtin.include_tasks: ../../shared/qdevice-verify.yml

@@ -1,0 +1,69 @@
+# {{ ansible_managed }}
+totem {
+	version: 2
+	cluster_name: {{ corosync_cluster_name }}
+	transport: {{ corosync_transport }}
+	link_mode: {{ corosync_link_mode }}
+	token: {{ corosync_token }}
+{% if corosync_consensus is not none %}
+	consensus: {{ corosync_consensus }}
+{% endif %}
+	crypto_cipher: {{ corosync_crypto_cipher }}
+	crypto_hash: {{ corosync_crypto_hash }}
+{% for link in corosync_links %}
+	interface {
+		linknumber: {{ link.linknumber }}
+{% if link.knet_link_priority is defined %}
+		knet_link_priority: {{ link.knet_link_priority }}
+{% endif %}
+{% if link.mcastport is defined %}
+		mcastport: {{ link.mcastport }}
+{% endif %}
+	}
+{% endfor %}
+}
+
+nodelist {
+{% for node in corosync_nodes %}
+	node {
+		name: {{ node.name }}
+		nodeid: {{ node.nodeid }}
+{% for addr in node.addrs %}
+		ring{{ corosync_links[loop.index0].linknumber }}_addr: {{ addr }}
+{% endfor %}
+	}
+{% endfor %}
+}
+
+quorum {
+	provider: corosync_votequorum
+{% if corosync_two_node %}
+	two_node: 1
+{% endif %}
+{% if corosync_wait_for_all is not none %}
+	wait_for_all: {{ corosync_wait_for_all | ternary(1, 0) }}
+{% endif %}
+{% if corosync_qdevice %}
+	device {
+{% if corosync_qdevice_algorithm == 'ffsplit' %}
+		votes: 1
+{% endif %}
+		model: net
+		net {
+			host: {{ corosync_qdevice_address or corosync_qdevice_host }}
+			port: {{ corosync_qdevice_port }}
+			algorithm: {{ corosync_qdevice_algorithm }}
+			tie_breaker: {{ corosync_qdevice_tie_breaker }}
+			tls: {{ corosync_qdevice_tls }}
+		}
+	}
+{% endif %}
+}
+
+logging {
+	to_syslog: {{ corosync_logging_to_syslog | ternary('yes', 'no') }}
+	to_stderr: no
+	to_logfile: no
+	timestamp: on
+	debug: {{ corosync_logging_debug | ternary('on', 'off') }}
+}

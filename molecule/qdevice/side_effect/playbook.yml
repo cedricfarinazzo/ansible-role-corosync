@@ -1,0 +1,66 @@
+---
+# A rerun keeps every certificate; an unreachable qnetd host stops the role before anything changes.
+- name: Before the reruns
+  hosts: nodes
+  gather_facts: false
+  tasks:
+    - name: Read the certificates, the authkey and corosync's start
+      ansible.builtin.shell:
+        cmd: |
+          sha256sum /etc/corosync/authkey /etc/corosync/qdevice/net/nssdb/cert9.db /etc/corosync/qdevice/net/nssdb/key4.db
+          systemctl show -p ActiveEnterTimestampMonotonic corosync corosync-qdevice
+      register: molecule_before
+      changed_when: false
+
+- name: Reruns
+  hosts: nodes
+  gather_facts: false
+  tasks:
+    - name: Rerun
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: no change
+        molecule_args: []
+        molecule_expect: ok
+
+    # Every certificate task reports changed when it runs: changed=0 means none ran
+    - name: No certificate work, nothing changed
+      ansible.builtin.assert:
+        that:
+          - molecule_run.stdout | regex_findall('changed=0 ') | length == groups['nodes'] | length
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+      run_once: true
+
+    - name: An unreachable qnetd host, with a token change
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: qnetd unreachable
+        molecule_args:
+          - -e
+          - corosync_qdevice_host=qnetd-missing.invalid
+          - -e
+          - corosync_token=5000
+        molecule_expect: fail
+
+    - name: Stopped at the qnetd CA
+      ansible.builtin.assert:
+        that:
+          - molecule_run.stdout is search('Read the qnetd CA certificate on the qnetd host')
+          - molecule_run.stdout is not search('TASK \[[^]]*Configuration\]')
+        fail_msg: "{{ molecule_run.stdout_lines[-30:] }}"
+      run_once: true
+
+    - name: Nothing restarted or rewritten
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          now=$(sha256sum /etc/corosync/authkey /etc/corosync/qdevice/net/nssdb/cert9.db /etc/corosync/qdevice/net/nssdb/key4.db
+            systemctl show -p ActiveEnterTimestampMonotonic corosync corosync-qdevice)
+          [ "$now" = "{{ molecule_before.stdout }}" ] || { echo "FAIL: changed: $now"; exit 1; }
+          if grep -q 'token: 5000' /etc/corosync/corosync.conf; then echo "FAIL: corosync.conf rewritten"; exit 1; fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Still quorate with the qdevice
+      ansible.builtin.include_tasks: ../../shared/qdevice-verify.yml

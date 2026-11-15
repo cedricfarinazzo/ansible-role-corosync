@@ -1,0 +1,62 @@
+---
+# present: install, configure and run Corosync; absent: stop, purge, remove config, authkey and certificates
+corosync_state: present
+
+# Cluster name: letters, digits, "_" and "-", at most 32 characters (also the qdevice certificate's name)
+corosync_cluster_name: ""
+
+# Every node of the cluster, identical on every host of the play:
+#   - name: node-a          # Corosync node name
+#     nodeid: 1             # unique, 1..2147483647, never changed once set
+#     addrs:                # one address per link, in corosync_links order
+#       - 192.0.2.11
+#     host: node-a          # inventory name (default: name)
+# Every node must be a host of the play: the role renders one nodelist on all of them.
+corosync_nodes: []
+
+# Links, each {linknumber: 0..7, knet_link_priority: 0..255 (optional), mcastport: port (optional, Corosync's 5405)}
+corosync_links:
+  - linknumber: 0
+
+# passive: one link at a time, the highest knet_link_priority first; active: every link at once
+corosync_link_mode: passive
+
+# Only knet is supported (Corosync 3)
+corosync_transport: knet
+
+# Totem token timeout in ms; consensus null leaves Corosync's 1.2 x token
+corosync_token: 3000
+corosync_consensus: null
+
+# Wire encryption and authentication with the shared authkey; "none"/"none" turns them off
+corosync_crypto_cipher: aes256
+corosync_crypto_hash: sha256
+
+# Two-node quorum (each node quorate alone after both met); never with a qdevice, which is the third vote
+corosync_two_node: false
+# wait_for_all: null leaves Corosync's default (on with two_node)
+corosync_wait_for_all: null
+
+# Quorum device: a corosync-qnetd host reached by every node
+corosync_qdevice: false
+# Inventory name of the qnetd host: the role reads its CA and signs the cluster certificate there (delegate_to)
+corosync_qdevice_host: ""
+# Address the nodes reach qnetd on (default: corosync_qdevice_host)
+corosync_qdevice_address: ""
+corosync_qdevice_port: 5403
+# ffsplit (even-sized clusters) or lms (last man standing)
+corosync_qdevice_algorithm: ffsplit
+# lowest, highest or a nodeid
+corosync_qdevice_tie_breaker: lowest
+# on, off or required
+corosync_qdevice_tls: "on"
+
+# A change Corosync cannot reload (cluster name, crypto, transport, link ports) is refused while it runs;
+# true restarts corosync on every node instead: a cluster outage
+corosync_allow_restart: false
+
+corosync_logging_to_syslog: true
+corosync_logging_debug: false
+
+# Extra packages, e.g. pacemaker
+corosync_packages_extra: []

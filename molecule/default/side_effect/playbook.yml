@@ -1,0 +1,139 @@
+---
+# Reruns from the control node: authkey kept, a reloadable change reloaded with no restart, a start-only change
+# refused with nothing changed, check mode on the converged cluster, then absent and nothing left.
+- name: Before the reruns
+  hosts: nodes
+  gather_facts: false
+  tasks:
+    - name: Read the authkey's checksum and corosync's start
+      ansible.builtin.shell: sha256sum /etc/corosync/authkey; systemctl show -p ActiveEnterTimestampMonotonic corosync
+      register: molecule_before
+      changed_when: false
+
+- name: Reruns
+  hosts: nodes
+  gather_facts: false
+  tasks:
+    - name: Rerun with no change
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: no change
+        molecule_args: []
+        molecule_expect: ok
+
+    - name: Nothing changed
+      ansible.builtin.assert:
+        that: molecule_run.stdout | regex_findall('changed=0 ') | length == groups['nodes'] | length
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+      run_once: true
+
+    - name: Check mode on the converged cluster
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: check mode
+        molecule_args:
+          - --check
+        molecule_expect: ok
+
+    - name: Check mode changes nothing
+      ansible.builtin.assert:
+        that: molecule_run.stdout | regex_findall('changed=0 ') | length == groups['nodes'] | length
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+      run_once: true
+
+    - name: A token change
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: token 4000
+        molecule_args:
+          - -e
+          - corosync_token=4000
+        molecule_expect: ok
+
+    - name: The reload ran once
+      ansible.builtin.assert:
+        that: molecule_run.stdout is search('Reload the configuration on every node')
+
+      run_once: true
+
+    - name: Token 4000 at runtime, corosync not restarted, the authkey kept
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          fail() { echo "FAIL: $*"; exit 1; }
+          [ "$(corosync-cmapctl -g totem.token | awk '{print $NF}')" = 4000 ] || fail "token: $(corosync-cmapctl -g totem.token)"
+          now=$(sha256sum /etc/corosync/authkey; systemctl show -p ActiveEnterTimestampMonotonic corosync)
+          [ "$now" = "{{ molecule_before.stdout }}" ] || fail "authkey or corosync start changed: $now"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: A cluster name change on the running cluster
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: cluster name
+        molecule_args:
+          - -e
+          - corosync_token=4000
+          - -e
+          - corosync_cluster_name=renamed
+        molecule_expect: fail
+
+    - name: Refused with its message
+      ansible.builtin.assert:
+        that: molecule_run.stdout is search('Corosync reads them at start only')
+        fail_msg: "{{ molecule_run.stdout_lines[-20:] }}"
+      run_once: true
+
+    - name: Nothing changed by the refused run
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          grep -q 'cluster_name: molecule$' /etc/corosync/corosync.conf || { echo "FAIL: corosync.conf changed"; exit 1; }
+          now=$(sha256sum /etc/corosync/authkey; systemctl show -p ActiveEnterTimestampMonotonic corosync)
+          [ "$now" = "{{ molecule_before.stdout }}" ] || { echo "FAIL: restarted: $now"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Quorate on the reloaded settings
+      ansible.builtin.include_tasks: ../../shared/quorate.yml
+      vars:
+        molecule_votes: 3
+
+    - name: State absent
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: absent
+        molecule_args:
+          - -e
+          - corosync_state=absent
+        molecule_expect: ok
+
+    - name: Nothing of Corosync left
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          fail() { echo "FAIL: $*"; exit 1; }
+          if dpkg-query -W -f '${Status}\n' corosync corosync-qdevice 2>/dev/null | grep -q 'ok installed'; then fail "package left"; fi
+          for f in /etc/corosync/corosync.conf /etc/corosync/authkey /etc/corosync/.corosync-static /etc/corosync/qdevice \
+            /var/lib/corosync /etc/systemd/system/pcsd.service; do [ ! -e $f ] || fail "$f left"; done
+          if pgrep -x corosync; then fail "corosync runs"; fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Absent again changes nothing
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: absent twice
+        molecule_args:
+          - -e
+          - corosync_state=absent
+        molecule_expect: ok
+
+    - name: Second absent run idempotent
+      ansible.builtin.assert:
+        that: molecule_run.stdout | regex_findall('changed=0 ') | length == groups['nodes'] | length
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+      run_once: true

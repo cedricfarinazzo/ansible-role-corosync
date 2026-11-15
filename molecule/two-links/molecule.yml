@@ -1,0 +1,94 @@
+---
+dependency:
+  name: shell
+  command: sh -c 'ansible-galaxy collection install -r "$MOLECULE_SCENARIO_DIRECTORY/collections.yml"'
+driver:
+  name: docker
+# Two nodes on two networks (documentation ranges): link 1 has the higher priority, link 0 is the fallback
+platforms:
+  - name: corosync-a-${MOLECULE_DISTRO:-debian13}
+    hostname: corosync-a
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    docker_networks:
+      - name: corosync-link0-${MOLECULE_DISTRO:-debian13}
+        ipam_config:
+          - subnet: 192.0.2.0/24
+      - name: corosync-link1-${MOLECULE_DISTRO:-debian13}
+        ipam_config:
+          - subnet: 198.51.100.0/24
+    networks:
+      - name: corosync-link0-${MOLECULE_DISTRO:-debian13}
+        ipv4_address: 192.0.2.11
+      - name: corosync-link1-${MOLECULE_DISTRO:-debian13}
+        ipv4_address: 198.51.100.11
+    groups:
+      - nodes
+  - name: corosync-b-${MOLECULE_DISTRO:-debian13}
+    hostname: corosync-b
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    networks:
+      - name: corosync-link0-${MOLECULE_DISTRO:-debian13}
+        ipv4_address: 192.0.2.12
+      - name: corosync-link1-${MOLECULE_DISTRO:-debian13}
+        ipv4_address: 198.51.100.12
+    groups:
+      - nodes
+provisioner:
+  name: ansible
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: ../shared/converge.yml
+    side_effect: side_effect/playbook.yml
+    verify: verify/playbook.yml
+  inventory:
+    group_vars:
+      all:
+        ansible_become: false
+      nodes:
+        corosync_cluster_name: molecule
+        corosync_two_node: true
+        corosync_links:
+          - linknumber: 0
+            knet_link_priority: 10
+          - linknumber: 1
+            knet_link_priority: 20
+        corosync_nodes:
+          - name: corosync-a
+            host: corosync-a-${MOLECULE_DISTRO:-debian13}
+            nodeid: 1
+            addrs:
+              - 192.0.2.11
+              - 198.51.100.11
+          - name: corosync-b
+            host: corosync-b-${MOLECULE_DISTRO:-debian13}
+            nodeid: 2
+            addrs:
+              - 192.0.2.12
+              - 198.51.100.12
+verifier:
+  name: ansible
+scenario:
+  name: two-links
+  test_sequence:
+    - dependency
+    - destroy
+    - create
+    - prepare
+    - check
+    - converge
+    - verify
+    - idempotence
+    - side_effect
+    - destroy

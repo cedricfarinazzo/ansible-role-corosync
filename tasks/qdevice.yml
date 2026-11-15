@@ -1,0 +1,151 @@
+---
+# The cluster certificate (corosync-qdevice-net-certutil): signed once on the qnetd host for the first node's
+# request, exported there as a PKCS#12 and imported on every other node. Request, certificate and PKCS#12 pass
+# through the controller's memory only (no_log). A node whose NSS database holds the cluster certificate is skipped.
+- name: Read whether this node holds the cluster certificate
+  ansible.builtin.command: certutil -L -d {{ corosync_qdevice_nssdb }} -n "Cluster Cert"
+  register: __corosync_cluster_cert
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Nodes without the cluster certificate
+  ansible.builtin.set_fact:
+    __corosync_cert_missing: >-
+      {{ corosync_node_hosts | map('extract', hostvars) | selectattr('__corosync_cluster_cert', 'defined')
+         | rejectattr('__corosync_cluster_cert.rc', 'equalto', 0) | map(attribute='inventory_hostname') | list }}
+
+- name: Certificate work
+  when: __corosync_cert_missing | length > 0 and not ansible_check_mode
+  block:
+    - name: Directory of the node's NSS database
+      ansible.builtin.file:
+        path: "{{ corosync_qdevice_ca | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: inventory_hostname in __corosync_cert_missing
+
+    - name: The qnetd CA on the node
+      ansible.builtin.copy:
+        content: "{{ __corosync_qnetd_ca.content | b64decode }}"
+        dest: "{{ corosync_qdevice_ca }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: inventory_hostname in __corosync_cert_missing
+
+    - name: The node's NSS database, trusting the qnetd CA
+      ansible.builtin.command: corosync-qdevice-net-certutil -i -c {{ corosync_qdevice_ca }}
+      args:
+        creates: "{{ corosync_qdevice_nssdb }}/cert9.db"
+      when: inventory_hostname in __corosync_cert_missing
+
+    - name: Sign the cluster certificate for the first node
+      when: corosync_first_host in __corosync_cert_missing
+      block:
+        - name: The first node's certificate request
+          ansible.builtin.command: corosync-qdevice-net-certutil -r -n {{ corosync_cluster_name }}
+          changed_when: true
+          delegate_to: "{{ corosync_first_host }}"
+          run_once: true
+
+        - name: Read the request
+          ansible.builtin.slurp:
+            src: "{{ corosync_qdevice_crq }}"
+          delegate_to: "{{ corosync_first_host }}"
+          run_once: true
+          register: __corosync_crq
+          no_log: true
+
+        - name: The request on the qnetd host
+          ansible.builtin.copy:
+            content: "{{ __corosync_crq.content | b64decode }}"
+            dest: "{{ corosync_qnetd_nssdb }}/{{ corosync_cluster_name }}.crq"
+            owner: root
+            group: root
+            mode: "0600"
+          delegate_to: "{{ corosync_qdevice_host }}"
+          run_once: true
+          no_log: true
+
+        - name: Sign it on the qnetd host
+          ansible.builtin.command: >-
+            corosync-qnetd-certutil -s -c {{ corosync_qnetd_nssdb }}/{{ corosync_cluster_name }}.crq
+            -n {{ corosync_cluster_name }}
+          changed_when: true
+          delegate_to: "{{ corosync_qdevice_host }}"
+          run_once: true
+
+        - name: Read the cluster certificate
+          ansible.builtin.slurp:
+            src: "{{ corosync_qnetd_nssdb }}/cluster-{{ corosync_cluster_name }}.crt"
+          delegate_to: "{{ corosync_qdevice_host }}"
+          run_once: true
+          register: __corosync_cluster_crt
+          no_log: true
+
+        - name: The cluster certificate on the first node
+          ansible.builtin.copy:
+            content: "{{ __corosync_cluster_crt.content | b64decode }}"
+            dest: "{{ corosync_qdevice_nssdb }}/cluster-{{ corosync_cluster_name }}.crt"
+            owner: root
+            group: root
+            mode: "0600"
+          delegate_to: "{{ corosync_first_host }}"
+          run_once: true
+          no_log: true
+
+        - name: Import it on the first node and export the PKCS#12
+          ansible.builtin.command: >-
+            corosync-qdevice-net-certutil -M -c {{ corosync_qdevice_nssdb }}/cluster-{{ corosync_cluster_name }}.crt
+          changed_when: true
+          delegate_to: "{{ corosync_first_host }}"
+          run_once: true
+
+    - name: Import the cluster certificate on the other nodes
+      when: __corosync_cert_missing | difference([corosync_first_host]) | length > 0
+      block:
+        - name: Read the PKCS#12 on the first node
+          ansible.builtin.slurp:
+            src: "{{ corosync_qdevice_p12 }}"
+          delegate_to: "{{ corosync_first_host }}"
+          run_once: true
+          register: __corosync_p12
+          no_log: true
+
+        # Binary: decoded on the node
+        - name: The PKCS#12 on the node
+          ansible.builtin.command:
+            argv:
+              - sh
+              - -c
+              - umask 0177 && base64 -d > "$1"
+              - sh
+              - "{{ corosync_qdevice_p12 }}"
+            stdin: "{{ __corosync_p12.content }}"
+          changed_when: true
+          no_log: true
+          when: inventory_hostname in __corosync_cert_missing and inventory_hostname != corosync_first_host
+
+        - name: Import it
+          ansible.builtin.command: corosync-qdevice-net-certutil -m -c {{ corosync_qdevice_p12 }}
+          changed_when: true
+          when: inventory_hostname in __corosync_cert_missing and inventory_hostname != corosync_first_host
+
+# A new device section or a reload restarts the qdevice on the new settings
+- name: Restart the quorum device on a changed configuration
+  ansible.builtin.systemd_service:
+    name: corosync-qdevice.service
+    state: restarted
+  when:
+    - __corosync_conf_result is changed or __corosync_cert_missing | length > 0
+    - not ansible_check_mode or 'corosync-qdevice.service' in ansible_facts.services
+
+- name: Quorum device enabled and running
+  ansible.builtin.systemd_service:
+    name: corosync-qdevice.service
+    enabled: true
+    state: started
+  when: not ansible_check_mode or 'corosync-qdevice.service' in ansible_facts.services

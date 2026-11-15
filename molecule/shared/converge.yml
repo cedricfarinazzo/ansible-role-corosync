@@ -1,0 +1,5 @@
+---
+- name: Converge
+  hosts: nodes
+  roles:
+    - role: ../../../ansible-role-corosync

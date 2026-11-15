@@ -1,0 +1,23 @@
+---
+# Tasks: this node sees every node, quorate, with the expected votes; waits for the membership to settle.
+# Each check line ends in "|| fail": a shell task's status is its last command's only.
+- name: Quorate with every node
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      fail() { echo "FAIL: $*"; corosync-quorumtool -s; exit 1; }
+      for i in $(seq 30); do
+        q=$(corosync-quorumtool -s 2>&1) || true
+        grep -qE '^Quorate: +Yes' <<<"$q" && grep -qE "^Total votes: +{{ molecule_votes }}\$" <<<"$q" && break
+        sleep 2
+      done
+      grep -qE '^Quorate: +Yes' <<<"$q" || fail "not quorate"
+      grep -qE "^Expected votes: +{{ molecule_votes }}\$" <<<"$q" || fail "expected votes not {{ molecule_votes }}"
+      grep -qE "^Total votes: +{{ molecule_votes }}\$" <<<"$q" || fail "total votes not {{ molecule_votes }}"
+      n=$(corosync-quorumtool -l | grep -v Qdevice | grep -cE '^ +[0-9]+ +[0-9]+ ') || true
+      [ "$n" = "{{ groups['nodes'] | length }}" ] || fail "members: $n"
+      [ "$(corosync-cmapctl -g totem.cluster_name | awk '{print $NF}')" = "{{ corosync_cluster_name }}" ] \
+        || fail "running cluster name is not {{ corosync_cluster_name }}: the package's default cluster still runs"
+  args:
+    executable: /bin/bash
+  changed_when: false

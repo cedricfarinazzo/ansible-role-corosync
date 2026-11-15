@@ -1,0 +1,70 @@
+---
+# One authkey for the cluster: made once on the first node, copied node to node through the controller's
+# memory (no_log), never written on the controller. A key already on a node is kept, never regenerated.
+- name: Read the authkey's checksum
+  ansible.builtin.stat:
+    path: "{{ corosync_authkey }}"
+    checksum_algorithm: sha256
+    get_mime: false
+  register: __corosync_authkey_stat
+
+- name: Nodes holding an authkey
+  ansible.builtin.set_fact:
+    __corosync_key_holders: >-
+      {{ corosync_node_hosts | map('extract', hostvars) | selectattr('__corosync_authkey_stat', 'defined')
+         | selectattr('__corosync_authkey_stat.stat.exists') | map(attribute='inventory_hostname') | list }}
+    __corosync_key_missing: >-
+      {{ corosync_node_hosts | map('extract', hostvars) | selectattr('__corosync_authkey_stat', 'defined')
+         | rejectattr('__corosync_authkey_stat.stat.exists') | map(attribute='inventory_hostname') | list }}
+
+- name: The nodes that hold an authkey hold the same one
+  ansible.builtin.assert:
+    that: >-
+      __corosync_key_holders | map('extract', hostvars, ['__corosync_authkey_stat', 'stat', 'checksum'])
+      | unique | length <= 1
+    fail_msg: >-
+      the authkeys of {{ __corosync_key_holders | join(', ') }} differ: the role never picks one. Copy the
+      cluster's {{ corosync_authkey }} to the other nodes, or remove the wrong ones
+    quiet: true
+
+- name: Generate the authkey on the first node
+  ansible.builtin.command: corosync-keygen -k {{ corosync_authkey }}
+  args:
+    creates: "{{ corosync_authkey }}"
+  when: __corosync_key_holders | length == 0 and inventory_hostname == corosync_first_host
+
+- name: Read the authkey from a node that holds it
+  ansible.builtin.slurp:
+    src: "{{ corosync_authkey }}"
+  delegate_to: "{{ (__corosync_key_holders + [corosync_first_host]) | first }}"
+  run_once: true
+  register: __corosync_authkey_content
+  no_log: true
+  when:
+    - __corosync_key_missing | difference([corosync_first_host] if __corosync_key_holders | length == 0 else []) | length > 0
+    - not (ansible_check_mode and __corosync_key_holders | length == 0)
+
+# The key is binary: decoded on the node, never through a text template
+- name: Copy the authkey to a node without one
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -c
+      - umask 0377 && base64 -d > "$1"
+      - sh
+      - "{{ corosync_authkey }}"
+    stdin: "{{ __corosync_authkey_content.content }}"
+  no_log: true
+  changed_when: true
+  when:
+    - not __corosync_authkey_stat.stat.exists
+    - __corosync_authkey_content.content is defined
+    - not (__corosync_key_holders | length == 0 and inventory_hostname == corosync_first_host)
+
+- name: The authkey is root's only
+  ansible.builtin.file:
+    path: "{{ corosync_authkey }}"
+    owner: root
+    group: root
+    mode: "0400"
+  when: not ansible_check_mode or __corosync_authkey_stat.stat.exists

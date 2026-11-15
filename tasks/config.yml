@@ -1,0 +1,83 @@
+---
+# A change Corosync reloads (nodes, token, priorities, quorum) goes through one corosync-cfgtool -R; one it reads
+# at start only (corosync_static) is refused before any file changes, unless corosync_allow_restart.
+- name: Read the start-only settings of the last run
+  ansible.builtin.slurp:
+    src: "{{ corosync_static_stamp }}"
+  register: __corosync_stamp
+  failed_when: false
+  check_mode: false
+
+- name: Read the services
+  ansible.builtin.service_facts:
+
+- name: Compare the start-only settings
+  ansible.builtin.set_fact:
+    __corosync_managed: "{{ __corosync_stamp.content is defined }}"
+    __corosync_static_changed: >-
+      {{ __corosync_stamp.content is defined
+         and (__corosync_stamp.content | b64decode | from_json) != corosync_static }}
+    __corosync_unit: "{{ 'corosync.service' in ansible_facts.services }}"
+    __corosync_running: "{{ (ansible_facts.services['corosync.service'] | default({})).state | default('') == 'running' }}"
+
+- name: Refuse a start-only change on a running cluster
+  ansible.builtin.assert:
+    that: >-
+      corosync_allow_restart or corosync_node_hosts | map('extract', hostvars) | selectattr('__corosync_static_changed', 'defined')
+      | selectattr('__corosync_static_changed') | selectattr('__corosync_running') | list | length == 0
+    fail_msg: >-
+      cluster name, crypto, transport or link ports changed: Corosync reads them at start only, a reload would
+      leave the nodes on the old values. Nothing was changed. Stop the cluster (corosync on every node), run the
+      role again, or set corosync_allow_restart: true to let it restart every node (a cluster outage)
+    quiet: true
+
+- name: Configuration
+  ansible.builtin.template:
+    src: corosync.conf.j2
+    dest: "{{ corosync_conf }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: __corosync_conf_result
+
+- name: Record the start-only settings
+  ansible.builtin.copy:
+    content: "{{ corosync_static | to_nice_json }}\n"
+    dest: "{{ corosync_static_stamp }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+# Not yet managed (the package's default single-node cluster) or a start-only change: restart on the role's file
+- name: Restart corosync on the role's configuration
+  ansible.builtin.systemd_service:
+    name: corosync.service
+    state: restarted
+  register: __corosync_restarted
+  when:
+    - __corosync_conf_result is changed
+    - not __corosync_managed or __corosync_static_changed or not __corosync_running
+    - not ansible_check_mode or __corosync_unit
+
+- name: Corosync enabled and running
+  ansible.builtin.systemd_service:
+    name: corosync.service
+    enabled: true
+    state: started
+  # Check mode on a fresh host: the package, so the unit, is not there yet
+  when: not ansible_check_mode or __corosync_unit
+
+- name: Nodes to reload
+  ansible.builtin.set_fact:
+    __corosync_reload_on: >-
+      {{ corosync_node_hosts | map('extract', hostvars) | selectattr('__corosync_conf_result', 'defined')
+         | selectattr('__corosync_conf_result', 'changed') | selectattr('__corosync_restarted', 'skipped')
+         | map(attribute='inventory_hostname') | list }}
+
+# corosync-cfgtool -R reloads every running node of the cluster at once: after every node wrote its file
+- name: Reload the configuration on every node
+  ansible.builtin.command: corosync-cfgtool -R
+  run_once: true
+  changed_when: true
+  delegate_to: "{{ __corosync_reload_on | first | default(inventory_hostname) }}"
+  when: __corosync_reload_on | length > 0 and not ansible_check_mode

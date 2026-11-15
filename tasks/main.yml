@@ -1,0 +1,32 @@
+---
+- name: Validate inputs
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Corosync
+  when: corosync_state == 'present'
+  block:
+    # Before any package or restart: an unreachable qnetd host stops the role with the cluster untouched
+    - name: Quorum device CA
+      ansible.builtin.include_tasks: qdevice_ca.yml
+      when: corosync_qdevice
+
+    - name: Packages
+      ansible.builtin.include_tasks: install.yml
+
+    - name: Authkey
+      ansible.builtin.include_tasks: authkey.yml
+
+    - name: Configuration and service
+      ansible.builtin.include_tasks: config.yml
+
+    - name: Quorum device certificates and service
+      ansible.builtin.include_tasks: qdevice.yml
+      when: corosync_qdevice
+
+    - name: Quorum device off
+      ansible.builtin.include_tasks: qdevice_off.yml
+      when: not corosync_qdevice
+
+- name: Remove Corosync
+  ansible.builtin.include_tasks: absent.yml
+  when: corosync_state == 'absent'

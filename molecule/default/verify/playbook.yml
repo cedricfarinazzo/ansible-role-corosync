@@ -1,0 +1,35 @@
+---
+- name: Verify the cluster
+  hosts: nodes
+  gather_facts: false
+  vars:
+    molecule_votes: 3
+  tasks:
+    - name: Quorate
+      ansible.builtin.include_tasks: ../../shared/quorate.yml
+
+    - name: Authkey root's only, crypto on, pcsd masked, every link up
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          fail() { echo "FAIL: $*"; exit 1; }
+          [ "$(stat -c '%a %U %G %s' /etc/corosync/authkey)" = "400 root root 256" ] || fail "authkey: $(stat -c '%a %U %G %s' /etc/corosync/authkey)"
+          [ "$(corosync-cmapctl -g totem.crypto_cipher | awk '{print $NF}')" = aes256 ] || fail "cipher"
+          [ "$(corosync-cmapctl -g totem.crypto_hash | awk '{print $NF}')" = sha256 ] || fail "hash"
+          [ "$(systemctl is-enabled pcsd.service 2>&1)" = masked ] || fail "pcsd not masked"
+          systemctl is-enabled -q corosync.service || fail "corosync not enabled"
+          [ "$(corosync-cfgtool -n | grep -c 'enabled connected')" = 2 ] || fail "links: $(corosync-cfgtool -n)"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Read the authkey's checksum
+      ansible.builtin.stat:
+        path: /etc/corosync/authkey
+        checksum_algorithm: sha256
+      register: molecule_key
+
+    - name: One authkey on every node
+      ansible.builtin.assert:
+        that: groups['nodes'] | map('extract', hostvars, ['molecule_key', 'stat', 'checksum']) | unique | length == 1
+      run_once: true

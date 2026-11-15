@@ -1,0 +1,21 @@
+---
+# Tasks: over molecule_wait seconds, the knet data packets this node sends to its peer move on molecule_busy
+# only (molecule_idle stays the same). Passive mode sends on one link at a time.
+- name: Data packets to the peer move on one link only
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      fail() { echo "FAIL: $*"; corosync-cfgtool -n; exit 1; }
+      k() { corosync-cmapctl -m stats "stats.knet.node{{ molecule_peer }}.link$1.tx_data_packets" | awk '{print $NF}'; }
+      sleep {{ molecule_settle | default(0) }}
+      b0=$(k {{ molecule_busy }}); i0=$(k {{ molecule_idle }})
+      sleep {{ molecule_wait | default(10) }}
+      b1=$(k {{ molecule_busy }}); i1=$(k {{ molecule_idle }})
+      [ "$b1" -gt "$b0" ] || fail "link {{ molecule_busy }}: $b0 -> $b1, not rising"
+      [ "$i1" = "$i0" ] || fail "link {{ molecule_idle }}: $i0 -> $i1, moving"
+      echo "link {{ molecule_busy }} $b0 -> $b1, link {{ molecule_idle }} $i0 -> $i1"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  vars:
+    molecule_peer: "{{ corosync_nodes | rejectattr('host', 'equalto', inventory_hostname) | map(attribute='nodeid') | first }}"
