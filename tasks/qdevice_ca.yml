@@ -1,0 +1,15 @@
+---
+# Read on the qnetd host (delegate_to); corosync-qnetd's package creates the CA in its NSS database.
+# Unreachable or missing: the role stops here, before any package, file or restart on the nodes.
+- name: Read the qnetd CA certificate on the qnetd host
+  ansible.builtin.slurp:
+    src: "{{ corosync_qnetd_ca }}"
+  delegate_to: "{{ corosync_qdevice_host }}"
+  register: __corosync_qnetd_ca
+  check_mode: false
+
+- name: The qnetd CA is a certificate
+  ansible.builtin.assert:
+    that: __corosync_qnetd_ca.content | b64decode is search('-----BEGIN CERTIFICATE-----')
+    fail_msg: "{{ corosync_qnetd_ca }} on {{ corosync_qdevice_host }} is no certificate: is corosync-qnetd installed?"
+    quiet: true

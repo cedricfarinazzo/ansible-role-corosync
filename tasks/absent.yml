@@ -1,0 +1,45 @@
+---
+# Removes the role's files only: /etc/corosync/qnetd (a qnetd server on the host) is left alone
+- name: Read the services
+  ansible.builtin.service_facts:
+
+- name: Services stopped and disabled
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - corosync-qdevice.service
+    - corosync.service
+  when: item in ansible_facts.services
+
+- name: Packages purged
+  ansible.builtin.apt:
+    name: "{{ ['corosync', 'corosync-qdevice'] + corosync_packages_extra }}"
+    state: absent
+    purge: true
+
+- name: Configuration, authkey, certificates and state removed
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ corosync_conf }}"
+    - "{{ corosync_authkey }}"
+    - "{{ corosync_static_stamp }}"
+    - /etc/corosync/qdevice
+    - /etc/corosync/uidgid.d
+    - /var/lib/corosync
+    - /var/log/corosync
+
+- name: Mask of pcsd removed
+  ansible.builtin.file:
+    path: /etc/systemd/system/pcsd.service
+    state: absent
+  register: __corosync_pcsd_mask
+
+# Inline, not a handler: the role has none and absent ends here
+- name: Systemd forgets the mask  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: __corosync_pcsd_mask is changed

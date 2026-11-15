@@ -1,0 +1,9 @@
+---
+- name: Verify the cluster after the failure cases
+  hosts: nodes
+  gather_facts: false
+  vars:
+    molecule_votes: 2
+  tasks:
+    - name: Quorate
+      ansible.builtin.include_tasks: ../../shared/quorate.yml

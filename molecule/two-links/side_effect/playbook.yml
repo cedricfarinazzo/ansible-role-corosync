@@ -1,0 +1,55 @@
+---
+# Link 1's interface down on one node: link 0 takes the traffic, the cluster stays quorate; back up, link 1 again.
+- name: Link 1 down on corosync-b
+  hosts: nodes
+  gather_facts: false
+  tasks:
+    - name: Take link 1's interface down
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          ip -o -4 addr show | awk '$4 ~ /^198\.51\.100\./ {print $2}' | xargs -r -I{} ip link set {} down
+      args:
+        executable: /bin/bash
+      changed_when: true
+      when: inventory_hostname is search('corosync-b')
+
+    - name: Link 0 carries the data
+      ansible.builtin.include_tasks: ../../shared/links.yml
+      vars:
+        molecule_busy: 0
+        molecule_idle: 1
+        molecule_wait: 10
+        molecule_settle: 10
+
+    - name: Link 1 to the peer not connected
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          [ "$(corosync-cfgtool -n | grep -c 'enabled connected')" = 1 ] || { echo "FAIL: $(corosync-cfgtool -n)"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Still quorate
+      ansible.builtin.include_tasks: ../../shared/quorate.yml
+      vars:
+        molecule_votes: 2
+
+    - name: Link 1's interface up again
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          ip -o link show | awk -F': ' '$3 ~ /state DOWN/ {print $2}' | cut -d@ -f1 | xargs -r -I{} ip link set {} up
+      args:
+        executable: /bin/bash
+      changed_when: true
+      when: inventory_hostname is search('corosync-b')
+
+    - name: Link 1 carries the data again
+      ansible.builtin.include_tasks: ../../shared/links.yml
+      vars:
+        molecule_busy: 1
+        molecule_idle: 0
+        molecule_wait: 10
+        molecule_settle: 15

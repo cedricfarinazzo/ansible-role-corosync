@@ -1,0 +1,21 @@
+---
+corosync_conf: /etc/corosync/corosync.conf
+corosync_authkey: /etc/corosync/authkey
+# Values Corosync reads at start only: their fingerprint, kept beside the config, refuses a reload that would skip them
+corosync_static_stamp: /etc/corosync/.corosync-static
+corosync_static:
+  cluster_name: "{{ corosync_cluster_name }}"
+  transport: "{{ corosync_transport }}"
+  crypto_cipher: "{{ corosync_crypto_cipher }}"
+  crypto_hash: "{{ corosync_crypto_hash }}"
+  mcastports: "{{ corosync_links | map(attribute='mcastport', default=5405) | map('int') | list }}"
+corosync_packages: "{{ ['corosync'] + (['corosync-qdevice'] if corosync_qdevice else []) + corosync_packages_extra }}"
+corosync_node_hosts: >-
+  {% set h = [] %}{% for n in corosync_nodes %}{% set _ = h.append(n.host | default(n.name)) %}{% endfor %}{{ h }}
+corosync_first_host: "{{ corosync_node_hosts | first }}"
+corosync_qdevice_nssdb: /etc/corosync/qdevice/net/nssdb
+corosync_qnetd_nssdb: /etc/corosync/qnetd/nssdb
+corosync_qnetd_ca: "{{ corosync_qnetd_nssdb }}/qnetd-cacert.crt"
+corosync_qdevice_ca: /etc/corosync/qdevice/net/qnetd-cacert.crt
+corosync_qdevice_p12: "{{ corosync_qdevice_nssdb }}/qdevice-net-node.p12"
+corosync_qdevice_crq: "{{ corosync_qdevice_nssdb }}/qdevice-net-node.crq"

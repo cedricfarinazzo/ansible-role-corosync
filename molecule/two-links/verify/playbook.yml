@@ -1,0 +1,26 @@
+---
+- name: Verify both links, link 1 preferred
+  hosts: nodes
+  gather_facts: false
+  vars:
+    molecule_votes: 2
+  tasks:
+    - name: Quorate
+      ansible.builtin.include_tasks: ../../shared/quorate.yml
+
+    - name: The peer on link 0 and link 1, both connected
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          n=$(corosync-cfgtool -n)
+          for l in 0 1; do grep -qE "LINK: $l .*enabled connected" <<<"$n" || { echo "FAIL: link $l: $n"; exit 1; }; done
+          [ "$(grep -c 'enabled connected' <<<"$n")" = 2 ] || { echo "FAIL: $n"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Link 1 carries the data
+      ansible.builtin.include_tasks: ../../shared/links.yml
+      vars:
+        molecule_busy: 1
+        molecule_idle: 0

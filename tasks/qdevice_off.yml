@@ -1,0 +1,7 @@
+---
+- name: Quorum device stopped and disabled
+  ansible.builtin.systemd_service:
+    name: corosync-qdevice.service
+    enabled: false
+    state: stopped
+  when: "'corosync-qdevice.service' in ansible_facts.services"

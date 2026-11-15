@@ -1,0 +1,16 @@
+---
+# Debian's postinst starts corosync at once with its default single-node corosync.conf; config.yml then
+# restarts it on the role's file, so no node stays in that default cluster.
+- name: Packages are installed
+  ansible.builtin.apt:
+    name: "{{ corosync_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# The role renders corosync.conf itself: pcsd would rewrite it. systemctl, not the module: pcsd is usually not
+# installed, and the module refuses to mask an unknown unit
+- name: Mask pcsd  # noqa: command-instead-of-module
+  ansible.builtin.command: systemctl mask pcsd.service
+  args:
+    creates: /etc/systemd/system/pcsd.service

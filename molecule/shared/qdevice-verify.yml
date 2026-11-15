@@ -1,0 +1,37 @@
+---
+# Tasks: the qdevice votes on every node and qnetd lists every node over TLS with an ACK.
+- name: Quorate, the qdevice voting on every node
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      fail() { echo "FAIL: $*"; corosync-quorumtool -s; exit 1; }
+      for i in $(seq 30); do
+        q=$(corosync-quorumtool -s 2>&1) || true
+        grep -qE '^Flags: .*Qdevice' <<<"$q" && [ "$(grep -cE ' A,V,NMW ' <<<"$q")" = "{{ groups['nodes'] | length }}" ] && break
+        sleep 2
+      done
+      grep -qE '^Flags: +Quorate( .*)? Qdevice' <<<"$q" || fail "flags"
+      [ "$(grep -cE ' A,V,NMW ' <<<"$q")" = "{{ groups['nodes'] | length }}" ] || fail "qdevice state not A,V,NMW on every node"
+      systemctl is-enabled -q corosync-qdevice.service || fail "qdevice not enabled"
+      # The node's own certificate, not only the CA
+      certutil -L -d /etc/corosync/qdevice/net/nssdb -n "Cluster Cert" > /dev/null || fail "no cluster certificate"
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Qnetd lists every node, TLS on, vote ACK
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      fail() { echo "FAIL: $*"; corosync-qnetd-tool -l -v; exit 1; }
+      l=$(corosync-qnetd-tool -l -v -c {{ corosync_cluster_name }})
+      for id in {{ corosync_nodes | map(attribute='nodeid') | join(' ') }}; do
+        grep -qE "Node ID $id:" <<<"$l" || fail "node $id missing"
+      done
+      [ "$(grep -cE 'TLS active:[[:space:]]+Yes' <<<"$l")" = "{{ corosync_nodes | length }}" ] || fail "TLS not active on every node"
+      [ "$(grep -cE 'Vote:[[:space:]]+(ACK|No change \(ACK\))' <<<"$l")" = "{{ corosync_nodes | length }}" ] || fail "not every vote ACK"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  delegate_to: "{{ corosync_qdevice_host }}"
+  run_once: true

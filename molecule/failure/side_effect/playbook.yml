@@ -1,0 +1,109 @@
+---
+# Each bad run must fail with its message and leave the cluster as it was; a joining node gets the cluster's key.
+- name: Before the failure cases
+  hosts: nodes
+  gather_facts: false
+  tasks:
+    - name: Read the configuration, the authkey and corosync's start
+      ansible.builtin.shell: sha256sum /etc/corosync/corosync.conf /etc/corosync/authkey; systemctl show -p ActiveEnterTimestampMonotonic corosync
+      register: molecule_before
+      changed_when: false
+
+- name: Failure cases
+  hosts: nodes
+  gather_facts: false
+  vars:
+    molecule_cases:
+      - label: node lists that differ between hosts
+        args: [-e, molecule_mismatch=true]
+        message: identical on every node
+      - label: a duplicate nodeid
+        args: [-e, '{"molecule_nodeid": 1}']
+        message: appears twice in corosync_nodes
+      - label: two_node with a qdevice
+        args: [-e, '{"corosync_qdevice": true, "corosync_qdevice_host": "qnetd.example.com"}']
+        message: corosync_two_node and corosync_qdevice exclude each other
+      - label: a cluster name with a trailing newline
+        args: [-e, '{"corosync_cluster_name": "molecule\n"}']
+        message: corosync_cluster_name 1-32
+      - label: an address with an embedded newline
+        args: [-e, '{"molecule_node": {"name": "x", "nodeid": 1, "addrs": ["192.0.2.1\nring1_addr: 192.0.2.9"]}}']
+        message: a node is
+  tasks:
+    - name: Run each bad input
+      ansible.builtin.command:
+        argv: "{{ [playbook_dir ~ '/../../shared/run.sh'] + item.args }}"
+      register: molecule_bad
+      changed_when: false
+      failed_when: molecule_bad.rc == 0 or molecule_bad.stdout is not search(item.message)
+      delegate_to: localhost
+      run_once: true
+      loop: "{{ molecule_cases }}"
+      loop_control:
+        label: "{{ item.label }}"
+
+    - name: Nothing changed by the refused runs
+      ansible.builtin.shell:
+        cmd: |
+          now=$(sha256sum /etc/corosync/corosync.conf /etc/corosync/authkey; systemctl show -p ActiveEnterTimestampMonotonic corosync)
+          [ "$now" = "{{ molecule_before.stdout }}" ] || { echo "FAIL: changed: $now"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Another authkey on the second node
+      ansible.builtin.shell: cp -p /etc/corosync/authkey /root/authkey.good && head -c 256 /dev/urandom > /etc/corosync/authkey
+      changed_when: true
+      when: inventory_hostname == groups['nodes'][1]
+
+    - name: Authkeys that differ
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: authkeys differ
+        molecule_args: []
+        molecule_expect: fail
+
+    - name: Refused with its message, corosync not restarted
+      ansible.builtin.assert:
+        that: molecule_run.stdout is search('the role never picks one')
+        fail_msg: "{{ molecule_run.stdout_lines[-20:] }}"
+      run_once: true
+
+    - name: The first node untouched
+      ansible.builtin.shell:
+        cmd: |
+          now=$(sha256sum /etc/corosync/corosync.conf /etc/corosync/authkey; systemctl show -p ActiveEnterTimestampMonotonic corosync)
+          [ "$now" = "{{ molecule_before.stdout }}" ] || { echo "FAIL: changed: $now"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: inventory_hostname == groups['nodes'][0]
+
+    # A node that joins (or lost its key) receives the cluster's key from a node that holds it
+    - name: No authkey on the second node
+      ansible.builtin.file:
+        path: /etc/corosync/authkey
+        state: absent
+      when: inventory_hostname == groups['nodes'][1]
+
+    - name: A node without the authkey
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: joining node
+        molecule_args: []
+        molecule_expect: ok
+
+    - name: The cluster's key on the second node, the first node untouched
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          now=$(sha256sum /etc/corosync/corosync.conf /etc/corosync/authkey; systemctl show -p ActiveEnterTimestampMonotonic corosync)
+          {% if inventory_hostname == groups['nodes'][0] %}
+          [ "$now" = "{{ molecule_before.stdout }}" ] || { echo "FAIL: changed: $now"; exit 1; }
+          {% else %}
+          [ "$(sha256sum < /etc/corosync/authkey)" = "$(sha256sum < /root/authkey.good)" ] || { echo "FAIL: not the cluster's key"; exit 1; }
+          [ "$(stat -c '%a %U' /etc/corosync/authkey)" = "400 root" ] || { echo "FAIL: mode"; exit 1; }
+          {% endif %}
+      args:
+        executable: /bin/bash
+      changed_when: false

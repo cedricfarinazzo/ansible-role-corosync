@@ -1,0 +1,142 @@
+---
+# A wrong value here would render a different, valid cluster: check every input before any change.
+# Every regex ends in \Z (a $ lets a trailing newline through) and its classes hold no control character.
+- name: Settings are sound
+  ansible.builtin.assert:
+    that:
+      - corosync_state in ['present', 'absent']
+      - corosync_packages_extra is sequence and corosync_packages_extra is not string
+      - corosync_packages_extra is not mapping
+      - corosync_packages_extra | map('string') | reject('match', '^[a-z0-9][a-z0-9.+-]+\Z') | list | length == 0
+    fail_msg: corosync_state present|absent; corosync_packages_extra a list of package names
+    quiet: true
+
+- name: Cluster settings are sound
+  when: corosync_state == 'present'
+  block:
+    - name: Cluster, links, totem and quorum settings
+      ansible.builtin.assert:
+        that:
+          - corosync_cluster_name is string and corosync_cluster_name is match('^[A-Za-z0-9_-]{1,32}\Z')
+          - corosync_transport == 'knet'
+          - corosync_link_mode in ['passive', 'active']
+          - corosync_token | string is match('^[0-9]+\Z') and corosync_token | int >= 100
+          - corosync_consensus is none or (corosync_consensus | string is match('^[0-9]+\Z')
+            and corosync_consensus | int > corosync_token | int)
+          - corosync_crypto_cipher in ['none', 'aes256', 'aes192', 'aes128']
+          - corosync_crypto_hash in ['none', 'md5', 'sha1', 'sha256', 'sha384', 'sha512']
+          # knet refuses a cipher without a hash
+          - corosync_crypto_cipher == 'none' or corosync_crypto_hash != 'none'
+          - corosync_two_node is boolean
+          - corosync_wait_for_all is none or corosync_wait_for_all is boolean
+          - corosync_qdevice is boolean
+          - corosync_allow_restart is boolean
+          - corosync_logging_to_syslog is boolean and corosync_logging_debug is boolean
+          - corosync_links is sequence and corosync_links is not string and corosync_links is not mapping
+          - corosync_links | length in range(1, 9)
+          - corosync_nodes is sequence and corosync_nodes is not string and corosync_nodes is not mapping
+          - corosync_nodes | length > 0
+        fail_msg: >-
+          corosync_cluster_name 1-32 of [A-Za-z0-9_-]; corosync_transport knet; corosync_link_mode passive|active;
+          corosync_token an integer >= 100 ms, corosync_consensus null or above it; corosync_crypto_cipher
+          none|aes256|aes192|aes128, corosync_crypto_hash none|md5|sha1|sha256|sha384|sha512 (not none with a
+          cipher); corosync_two_node, corosync_qdevice, corosync_allow_restart, corosync_logging_* booleans,
+          corosync_wait_for_all null or a boolean; corosync_links a list of 1 to 8; corosync_nodes a non-empty list
+        quiet: true
+
+    - name: Each link
+      ansible.builtin.assert:
+        that:
+          - item is mapping
+          - item.keys() | difference(['linknumber', 'knet_link_priority', 'mcastport']) | length == 0
+          - item.linknumber is defined and item.linknumber | string is match('^[0-7]\Z')
+          - item.knet_link_priority is not defined or (item.knet_link_priority | string is match('^[0-9]{1,3}\Z')
+            and item.knet_link_priority | int <= 255)
+          - item.mcastport is not defined or (item.mcastport | string is match('^[0-9]{1,5}\Z')
+            and item.mcastport | int in range(1, 65536))
+        fail_msg: "a link is {linknumber: 0-7, knet_link_priority: 0-255, mcastport: 1-65535}, no other key: {{ item }}"
+        quiet: true
+      loop: "{{ corosync_links }}"
+      loop_control:
+        label: "{{ item.linknumber | default('?') }}"
+
+    - name: Link numbers are unique
+      ansible.builtin.assert:
+        that: corosync_links | map(attribute='linknumber') | map('int') | unique | length == corosync_links | length
+        fail_msg: a link number appears twice in corosync_links
+        quiet: true
+
+    - name: Each node
+      ansible.builtin.assert:
+        that:
+          - item is mapping
+          - item.keys() | difference(['name', 'nodeid', 'addrs', 'host']) | length == 0
+          - item.name is defined and item.name is string and item.name is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,62}\Z')
+          - item.nodeid is defined and item.nodeid | string is match('^[1-9][0-9]{0,9}\Z')
+          - item.nodeid | int <= 2147483647
+          - item.host is not defined or (item.host is string and item.host is match('^[A-Za-z0-9][A-Za-z0-9._-]*\Z'))
+          - item.addrs is defined and item.addrs is sequence and item.addrs is not string and item.addrs is not mapping
+          - item.addrs | length == corosync_links | length
+          - item.addrs | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9.:-]*\Z') | list | length == 0
+        fail_msg: >-
+          a node is {name, nodeid: 1..2147483647, addrs: one address per link, host: inventory name}, no other key:
+          {{ item }}
+        quiet: true
+      loop: "{{ corosync_nodes }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+
+    - name: Names, node IDs, hosts and addresses are unique
+      ansible.builtin.assert:
+        that:
+          - corosync_nodes | map(attribute='name') | unique | length == corosync_nodes | length
+          - corosync_nodes | map(attribute='nodeid') | map('int') | unique | length == corosync_nodes | length
+          - corosync_node_hosts | unique | length == corosync_nodes | length
+          - corosync_nodes | map(attribute='addrs') | flatten | unique | length
+            == corosync_nodes | map(attribute='addrs') | flatten | length
+        fail_msg: a node name, nodeid, host or address appears twice in corosync_nodes
+        quiet: true
+
+    - name: Quorum device settings
+      ansible.builtin.assert:
+        that:
+          # The qdevice is the third vote: two_node with it would let each half run alone
+          - not (corosync_qdevice and corosync_two_node)
+          - corosync_qdevice_host is string
+          - not corosync_qdevice or corosync_qdevice_host is match('^[A-Za-z0-9][A-Za-z0-9._-]*\Z')
+          - corosync_qdevice_address is string
+          - corosync_qdevice_address | length == 0 or corosync_qdevice_address is match('^[A-Za-z0-9][A-Za-z0-9.:-]*\Z')
+          - corosync_qdevice_port | string is match('^[0-9]{1,5}\Z') and corosync_qdevice_port | int in range(1, 65536)
+          - corosync_qdevice_algorithm in ['ffsplit', 'lms']
+          - corosync_qdevice_tie_breaker | string is match('^(lowest|highest|[1-9][0-9]{0,9})\Z')
+          - corosync_qdevice_tls | string in ['on', 'off', 'required']
+          - not corosync_qdevice or corosync_qdevice_host not in corosync_node_hosts
+        fail_msg: >-
+          corosync_two_node and corosync_qdevice exclude each other; with corosync_qdevice, corosync_qdevice_host an
+          inventory name that is not a cluster node; corosync_qdevice_address an address or name;
+          corosync_qdevice_port 1-65535; corosync_qdevice_algorithm ffsplit|lms; corosync_qdevice_tie_breaker
+          lowest|highest|a nodeid; corosync_qdevice_tls on|off|required
+        quiet: true
+
+    # Rendered on each host first: a lazy value referencing hostvars does not render through another host
+    - name: This host's view of the cluster
+      ansible.builtin.set_fact:
+        __corosync_view:
+          nodes: "{{ corosync_nodes }}"
+          cluster_name: "{{ corosync_cluster_name }}"
+          links: "{{ corosync_links }}"
+      when: not (corosync_validate_only | default(false))
+
+    # Skipped when run alone (tests/validate.test.sh): there the play's host is not a node
+    - name: Every node is in the play, with the same nodelist and cluster name
+      ansible.builtin.assert:
+        that:
+          - corosync_node_hosts | difference(ansible_play_hosts_all) | length == 0
+          - inventory_hostname in corosync_node_hosts
+          - corosync_node_hosts | map('extract', hostvars, '__corosync_view') | unique | length == 1
+        fail_msg: >-
+          every host of corosync_nodes runs in this play ({{ corosync_node_hosts | join(', ') }}; missing:
+          {{ corosync_node_hosts | difference(ansible_play_hosts_all) | join(', ') or 'none' }}), this host is one
+          of them, and corosync_nodes, corosync_cluster_name and corosync_links are identical on every node
+        quiet: true
+      when: not (corosync_validate_only | default(false))
