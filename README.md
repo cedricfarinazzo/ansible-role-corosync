@@ -9,6 +9,19 @@ The role renders `corosync.conf` itself from a template (no `pcs`, `pcsd` masked
 
 ## 🚀 Quick Start
 
+Install from Ansible Galaxy ([cedricfarinazzo.corosync](https://galaxy.ansible.com/cedricfarinazzo/corosync)), pinned to a release:
+
+```yaml
+# requirements.yml
+roles:
+  - name: cedricfarinazzo.corosync
+    version: 1.0.0
+```
+
+```bash
+ansible-galaxy role install -r requirements.yml
+```
+
 ```yaml
 - hosts: cluster
   become: true
@@ -150,12 +163,17 @@ Scenarios: `default` (three nodes: check mode on a fresh host, converge, quorate
 
 ## 🚢 Releases
 
-semantic-release on `main` after CI passes: Conventional Commit PR titles, bare semver tags, notes in GitHub Releases.
+Once CI passes on `main`, [semantic-release](https://github.com/semantic-release/semantic-release) cuts the version from [Conventional Commits](https://www.conventionalcommits.org/): `fix:` releases a patch, `feat:` a minor, a `!` or `BREAKING CHANGE:` footer a major. A squash merge lands the pull request title (checked in CI), a merge commit lands each branch commit, so both must follow the convention. Each release gets a bare semver tag (`1.2.3`) and GitHub release notes; Ansible Galaxy imports the new tag from the repository. [Renovate](https://docs.renovatebot.com/) keeps the tooling and the pinned GitHub Actions up to date.
 
 ## 📦 Dependencies
 
-None: `ansible.builtin` only.
+- ✅ **Ansible Core Modules** (built-in); no collection
+- ✅ **OS packages** `corosync`, `corosync-qdevice` (quorum device); `corosync-qnetd` on the qnetd host, set up beforehand
 
 ## 👥 Authors & Contributors
 
-Cédric Farinazzo. MIT License.
+**Cédric Farinazzo** ([@cedricfarinazzo](https://github.com/cedricfarinazzo)) - *Author and Maintainer*
+
+## 📄 License
+
+MIT, see [LICENSE](LICENSE).
