@@ -30,6 +30,7 @@
       done
       [ "$(grep -cE 'TLS active:[[:space:]]+Yes' <<<"$l")" = "{{ corosync_nodes | length }}" ] || fail "TLS not active on every node"
       [ "$(grep -cE 'Vote:[[:space:]]+(ACK|No change \(ACK\))' <<<"$l")" = "{{ corosync_nodes | length }}" ] || fail "not every vote ACK"
+      [ ! -e /etc/corosync/qnetd/nssdb/{{ corosync_cluster_name }}.crq ] || fail "certificate request left on the qnetd host"
   args:
     executable: /bin/bash
   changed_when: false
