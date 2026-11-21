@@ -4,24 +4,25 @@ Orientation for Claude Code sessions in this repository. `AGENTS.md` is a symlin
 
 ## Purpose
 
-Public Ansible role `cedricfarinazzo.corosync` (Ansible Galaxy): Corosync 3 membership and quorum over knet links, one shared authkey, and an optional quorum device whose certificates the role signs on the qnetd host. Generic by design: no reference to any downstream project, host, user or network in code, defaults, docs or commit messages.
+Public Ansible role `cedricfarinazzo.corosync` (Ansible Galaxy): Corosync 3 membership and quorum over knet links, one shared authkey, an optional quorum device whose certificates the role signs on the qnetd host, and (`corosync_mode: qnetd`) the corosync-qnetd server itself. Generic by design: no reference to any downstream project, host, user or network in code, defaults, docs or commit messages.
 
 ## Layout
 
 - `defaults/main.yml` — every user-facing variable (`corosync_*`), with its generic default.
 - `vars/main.yml` — file paths, the start-only fingerprint (`corosync_static`), the package list, node hosts and the first host.
-- `tasks/main.yml` — `validate.yml` (every input asserted, then the same nodelist on every host; `corosync_validate_only` skips that last check for `tests/validate.test.sh`), then for `present`: `qdevice_ca.yml` (the qnetd CA read on the qnetd host, before anything changes), `install.yml` (packages, `pcsd` masked), `authkey.yml`, `config.yml` (start-only change refused, template, stamp, restart of a node not yet managed, one `corosync-cfgtool -R`), `qdevice.yml` or `qdevice_off.yml`; for `absent`: `absent.yml`.
-- `templates/corosync.conf.j2` — the whole configuration.
+- `tasks/main.yml` — `validate.yml` (every input asserted, then the same nodelist on every host; `corosync_validate_only` skips that last check for `tests/validate.test.sh`); qnetd mode: `qnetd.yml` (package, options file, restart on new options, service) or `qnetd_absent.yml`, first so the server runs before a node reads its CA; node mode, for `present`: `qdevice_ca.yml` (the qnetd CA read on the qnetd host, before anything changes), `install.yml` (packages, `pcsd` masked), `authkey.yml`, `config.yml` (start-only change refused, template, stamp, restart of a node not yet managed, one `corosync-cfgtool -R`), `qdevice.yml` or `qdevice_off.yml`; for `absent`: `absent.yml`.
+- `templates/corosync.conf.j2` — the whole configuration; `templates/corosync-qnetd.j2` — the qnetd options file.
 - `meta/main.yml` — Galaxy metadata; `platforms` lists exactly what CI tests.
-- `molecule/shared/` — what every scenario uses: `prepare.yml` (policy-rc.d removed, qnetd installed on the `qnetd` group), `converge.yml`, `run.sh` and `recap.yml` (a rerun from the control node on Molecule's inventory, its recap checked), `quorate.yml`, `links.yml` (knet data counters per link), `qdevice-verify.yml`.
+- `molecule/shared/` — what every scenario uses: `prepare.yml` (policy-rc.d removed, tools), `converge.yml` (every host: nodes and the qnetd host in qnetd mode), `run.sh` and `recap.yml` (a rerun from the control node on Molecule's inventory, its recap checked), `quorate.yml`, `links.yml` (knet data counters per link), `qdevice-verify.yml`, `qnetd-verify.yml`.
 - `molecule/default/` — three nodes, every distribution; `side_effect/` reruns (no change, check mode, token reload, cluster name refused, absent twice).
 - `molecule/two-links/` — two nodes on two documentation-range networks, `two_node`; link 1 down and up.
-- `molecule/qdevice/`, `molecule/qdevice-lms/` — a qnetd container with two nodes (ffsplit; a left request removed; unreachable qnetd host) and three nodes (lms).
+- `molecule/qdevice/`, `molecule/qdevice-lms/` — a qnetd container in qnetd mode with two nodes (ffsplit; a left request removed; unreachable qnetd host; the server untouched by reruns) and three nodes (lms).
+- `molecule/qnetd/` — the qnetd server alone (container `qnetd-server-*`): stale cache, new options, absent, a server set up beforehand adopted; also on arm64 in CI.
 - `molecule/failure/` — failure paths on a built two-node cluster, then verify it is still quorate.
 - `tests/validate.test.sh` — good and bad inputs against `tasks/validate.yml` on localhost.
 - `run-tests.sh` / `Makefile` — local Molecule entry points; several distros or `all` run in parallel, one log each in `.molecule-logs/`.
 - `requirements.yml` (none at runtime), `requirements-dev.txt` (controller tooling, exact pins), `package.json`, `bun.lock`, `.releaserc.json` (semantic-release only).
-- `.github/workflows/` — `ci.yml` (lint, Galaxy description length, shellcheck, input tests, default on every distribution, the other scenarios on Debian 13), `pr-title.yml`, `release.yml`.
+- `.github/workflows/` — `ci.yml` (lint, Galaxy description length, shellcheck, input tests, default on every distribution, the other scenarios on Debian 13, `qnetd` on Debian 13 arm64), `pr-title.yml`, `release.yml`.
 - `renovate.json` — dependency updates.
 
 ## Conventions
@@ -34,7 +35,7 @@ Public Ansible role `cedricfarinazzo.corosync` (Ansible Galaxy): Corosync 3 memb
 - **Every input checked before any change.** Every regex ends in `\Z`, never `$`; classes hold no control character; bad cases feed trailing and embedded newlines.
 - **Key material never reaches the output or the controller's disk:** the authkey, request, cluster certificate and PKCS#12 move by `slurp` and a node-side write, each task `no_log`; binary content is decoded on the node (`base64 -d`), never through a text template.
 - **A start-only change is refused on a running cluster** unless `corosync_allow_restart`; a reloadable one is one `corosync-cfgtool -R` after every node wrote its file.
-- **The role never runs the qnetd daemon:** it only reads the CA and signs on the qnetd host.
+- **The qnetd mode never touches the CA, the NSS database or a signed certificate:** the package makes them, the node mode signs there; the options file is the only file it writes, and only a change of it restarts qnetd (every qdevice reconnects).
 - **Examples never copy a real deployment:** `example.com` names, documentation addresses.
 - **GitHub Actions pinned by full commit SHA**, tag in a trailing comment. Exact pins for tooling; `renovate.json` identical in the sibling roles: change them together.
 - **License:** MIT.
@@ -65,6 +66,9 @@ Public Ansible role `cedricfarinazzo.corosync` (Ansible Galaxy): Corosync 3 memb
 - corosync-qdevice refuses ffsplit without `quorum.device.votes: 1` set ("50:50 split algorithm works only if quorum.device.votes configuration key is set to 1"): the template sets it for ffsplit; lms computes nodes - 1.
 - `corosync-quorumtool -l` lists the qdevice as one more line (`0 <votes> Qdevice`): count members without it.
 - Molecule's `side-effect` command has a dash; the sequence step is `side_effect`.
+- A fresh check-mode run of nodes and qnetd server in one play: the CA does not exist yet. `qdevice_ca.yml` lets the read fail only in check mode with the qnetd host in the play in qnetd mode; any other missing CA stops the role.
+- `apt` with `update_cache` and no package reports changed in check mode on a stale cache: the qnetd install names its package in the same task, so it reports only the package.
+- `qdevice` and `qdevice-lms` both name their container `qnetd-<distro>`: never run them in parallel locally; `qnetd` uses `qnetd-server-<distro>`.
 
 ## Self Improvement Loop
 

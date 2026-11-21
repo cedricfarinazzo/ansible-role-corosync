@@ -1,15 +1,22 @@
 ---
 # Read on the qnetd host (delegate_to); corosync-qnetd's package creates the CA in its NSS database.
 # Unreachable or missing: the role stops here, before any package, file or restart on the nodes.
+# One exception: check mode with the qnetd host in this play in qnetd mode, which has not installed it yet.
 - name: Read the qnetd CA certificate on the qnetd host
   ansible.builtin.slurp:
     src: "{{ corosync_qnetd_ca }}"
   delegate_to: "{{ corosync_qdevice_host }}"
   register: __corosync_qnetd_ca
   check_mode: false
+  failed_when: __corosync_qnetd_ca.content is not defined and not __corosync_qnetd_pending
+  vars:
+    __corosync_qnetd_pending: >-
+      {{ ansible_check_mode and corosync_qdevice_host in ansible_play_hosts
+         and hostvars[corosync_qdevice_host].corosync_mode | default('node') == 'qnetd' }}
 
 - name: The qnetd CA is a certificate
   ansible.builtin.assert:
     that: __corosync_qnetd_ca.content | b64decode is search('-----BEGIN CERTIFICATE-----')
     fail_msg: "{{ corosync_qnetd_ca }} on {{ corosync_qdevice_host }} is no certificate: is corosync-qnetd installed?"
     quiet: true
+  when: __corosync_qnetd_ca.content is defined or not ansible_check_mode

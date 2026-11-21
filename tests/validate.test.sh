@@ -99,6 +99,17 @@ bad "restart allowed as a string" "{$N, \"corosync_allow_restart\": \"yes\"}"
 bad "an extra package with a trailing newline" '{"corosync_packages_extra": ["pacemaker\n"]}'
 bad "an extra package with an embedded newline" '{"corosync_packages_extra": ["pace\nmaker"]}'
 bad "extra packages as a string" '{"corosync_packages_extra": "pacemaker"}'
+good "a qnetd server needs no cluster" '{"corosync_mode": "qnetd"}'
+good "a qnetd server with options" '{"corosync_mode": "qnetd", "corosync_qnetd_options": "-l 192.0.2.10 -p 5403 -s required -S sock_listen_backlog=10"}'
+good "a qnetd server absent" '{"corosync_mode": "qnetd", "corosync_state": "absent"}'
+bad "an unknown mode" '{"corosync_mode": "server"}'
+bad "a mode with a trailing newline" '{"corosync_mode": "qnetd\n"}'
+bad "qnetd options with a trailing newline" '{"corosync_mode": "qnetd", "corosync_qnetd_options": "-l 192.0.2.10\n"}'
+bad "qnetd options with an embedded newline" '{"corosync_mode": "qnetd", "corosync_qnetd_options": "-l\nX=1"}'
+bad "qnetd options with a CR" '{"corosync_mode": "qnetd", "corosync_qnetd_options": "-l\r192.0.2.10"}'
+bad "qnetd options with a quote" '{"corosync_mode": "qnetd", "corosync_qnetd_options": "-l \"x"}'
+bad "qnetd options with a command substitution" "{\"corosync_mode\": \"qnetd\", \"corosync_qnetd_options\": \"\$(id)\"}"
+bad "qnetd options as a list" '{"corosync_mode": "qnetd", "corosync_qnetd_options": ["-l"]}'
 
 if [[ $fails -gt 0 ]]; then echo "$fails failed" >&2; exit 1; fi
 echo "all passed"

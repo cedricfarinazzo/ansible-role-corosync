@@ -1,0 +1,25 @@
+---
+# Removes the qnetd server with its CA, its NSS database and every cluster certificate it signed
+- name: Read the services
+  ansible.builtin.service_facts:
+
+- name: Corosync-qnetd stopped and disabled
+  ansible.builtin.systemd_service:
+    name: corosync-qnetd.service
+    enabled: false
+    state: stopped
+  when: "'corosync-qnetd.service' in ansible_facts.services"
+
+- name: Corosync-qnetd purged
+  ansible.builtin.apt:
+    name: corosync-qnetd
+    state: absent
+    purge: true
+
+- name: Options, CA and NSS database removed
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ corosync_qnetd_defaults }}"
+    - /etc/corosync/qnetd

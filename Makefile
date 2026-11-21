@@ -1,7 +1,7 @@
 # Define supported distributions
 SUPPORTED_DISTROS := debian13 ubuntu2404 ubuntu2604
 DEFAULT_DISTRO := debian13
-SCENARIOS := two-links qdevice qdevice-lms failure
+SCENARIOS := two-links qdevice qdevice-lms failure qnetd
 
 .PHONY: molecule-test molecule-test-all lint help check-prereqs test $(addprefix molecule-test-,$(SCENARIOS))
 
@@ -15,6 +15,7 @@ help:
 	@echo "  molecule-test-qdevice      - Two nodes and a qnetd host (ffsplit)"
 	@echo "  molecule-test-qdevice-lms  - Three nodes and a qnetd host (lms)"
 	@echo "  molecule-test-failure      - The failure paths"
+	@echo "  molecule-test-qnetd        - The qnetd server alone: options, restart, absent, a server set up beforehand"
 	@echo "  lint                       - Run ansible-lint"
 	@echo ""
 	@echo "Supported distributions:"
