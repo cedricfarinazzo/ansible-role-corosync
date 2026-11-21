@@ -1,5 +1,6 @@
 ---
-# A rerun keeps every certificate; an unreachable qnetd host stops the role before anything changes.
+# A rerun keeps every certificate; a left request is removed alone; an unreachable qnetd host stops the role
+# before anything changes.
 - name: Before the reruns
   hosts: nodes
   gather_facts: false
@@ -28,6 +29,30 @@
       ansible.builtin.assert:
         that:
           - molecule_run.stdout | regex_findall('changed=0 ') | length == groups['nodes'] | length
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+      run_once: true
+
+    - name: A certificate request an earlier signing left on the qnetd host
+      ansible.builtin.copy:
+        dest: /etc/corosync/qnetd/nssdb/{{ corosync_cluster_name }}.crq
+        content: "request\n"
+        mode: "0600"
+      delegate_to: "{{ groups['qnetd'] | first }}"
+      run_once: true
+
+    - name: Rerun on the left request
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: request left
+        molecule_args: []
+        molecule_expect: ok
+
+    # One change in all: the removal, no certificate work nor restart
+    - name: Only the request removed
+      ansible.builtin.assert:
+        that:
+          - molecule_run.stdout | regex_findall('changed=0 ') | length == groups['nodes'] | length - 1
+          - molecule_run.stdout | regex_findall('changed=1 ') | length == 1
         fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
       run_once: true
 

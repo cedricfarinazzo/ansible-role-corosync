@@ -16,7 +16,7 @@ Public Ansible role `cedricfarinazzo.corosync` (Ansible Galaxy): Corosync 3 memb
 - `molecule/shared/` — what every scenario uses: `prepare.yml` (policy-rc.d removed, qnetd installed on the `qnetd` group), `converge.yml`, `run.sh` and `recap.yml` (a rerun from the control node on Molecule's inventory, its recap checked), `quorate.yml`, `links.yml` (knet data counters per link), `qdevice-verify.yml`.
 - `molecule/default/` — three nodes, every distribution; `side_effect/` reruns (no change, check mode, token reload, cluster name refused, absent twice).
 - `molecule/two-links/` — two nodes on two documentation-range networks, `two_node`; link 1 down and up.
-- `molecule/qdevice/`, `molecule/qdevice-lms/` — a qnetd container with two nodes (ffsplit; unreachable qnetd host) and three nodes (lms).
+- `molecule/qdevice/`, `molecule/qdevice-lms/` — a qnetd container with two nodes (ffsplit; a left request removed; unreachable qnetd host) and three nodes (lms).
 - `molecule/failure/` — failure paths on a built two-node cluster, then verify it is still quorate.
 - `tests/validate.test.sh` — good and bad inputs against `tasks/validate.yml` on localhost.
 - `run-tests.sh` / `Makefile` — local Molecule entry points; several distros or `all` run in parallel, one log each in `.molecule-logs/`.

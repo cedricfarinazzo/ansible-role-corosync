@@ -41,7 +41,7 @@ The role will:
 - ✅ Install `corosync` (and `corosync-qdevice`), mask `pcsd`
 - ✅ Make one authkey on the first node with `corosync-keygen` when no node holds one, and copy it to the nodes without one through the controller's memory (`no_log`, never written on the controller); a key on a node is kept, never regenerated; keys that differ stop the role
 - ✅ Write `corosync.conf`; restart corosync on a node still on the package's default configuration (Debian's postinst starts it at install); reload every node with one `corosync-cfgtool -R` for a change Corosync can reload; refuse a change it reads at start only (cluster name, crypto, transport, link ports) on a running cluster, with nothing changed
-- ✅ With a quorum device: on every node an NSS database trusting the qnetd CA; the first node's certificate request signed on the qnetd host, imported on the first node and exported as PKCS#12, imported on the other nodes; a node holding the cluster certificate is skipped
+- ✅ With a quorum device: on every node an NSS database trusting the qnetd CA; the first node's certificate request signed on the qnetd host, imported on the first node and exported as PKCS#12, imported on the other nodes; a node holding the cluster certificate is skipped; the request is removed from the qnetd host after signing, also one an earlier run left
 - ✅ Enable and start `corosync` and `corosync-qdevice`
 
 ## 📋 Requirements
@@ -145,7 +145,7 @@ corosync-qnetd-tool -l -v -c <cluster>   # on the qnetd host: every node, TLS ac
 
 ## ↩️ Rollback
 
-`corosync_state: absent` stops and disables `corosync-qdevice` and `corosync`, purges the packages, removes `corosync.conf`, the authkey, the stamp, `/etc/corosync/qdevice`, `/var/lib/corosync` and the `pcsd` mask. It leaves `/etc/corosync/qnetd` (a qnetd server) alone. On the qnetd host, `cluster-<name>.crt` and the request stay.
+`corosync_state: absent` stops and disables `corosync-qdevice` and `corosync`, purges the packages, removes `corosync.conf`, the authkey, the stamp, `/etc/corosync/qdevice`, `/var/lib/corosync` and the `pcsd` mask. It leaves `/etc/corosync/qnetd` (a qnetd server) alone. On the qnetd host, `cluster-<name>.crt` stays.
 
 ## 🧪 Testing
 
@@ -159,7 +159,7 @@ corosync-qnetd-tool -l -v -c <cluster>   # on the qnetd host: every node, TLS ac
 tests/validate.test.sh             # the input checks, on localhost
 ```
 
-Scenarios: `default` (three nodes: check mode on a fresh host, converge, quorate on the role's cluster, not the package's, one authkey 0400, crypto on, `pcsd` masked, idempotence; reruns: no change, check mode with no change, a token change reloaded with no restart, a cluster name change refused with nothing changed, absent and nothing left), `two-links` (link 1 preferred; its interface down: link 0 carries the data, still quorate; up: link 1 again), `qdevice` (two nodes and a qnetd container: certificates, ffsplit, Flags Qdevice, A,V,NMW, qnetd lists both over TLS with ACK; a rerun imports nothing; an unreachable qnetd host stops the role before anything changes), `qdevice-lms` (three nodes, lms), `failure` (node lists that differ, a duplicate nodeid, `two_node` with a qdevice, control characters; authkeys that differ refused; a node without the authkey receives the cluster's).
+Scenarios: `default` (three nodes: check mode on a fresh host, converge, quorate on the role's cluster, not the package's, one authkey 0400, crypto on, `pcsd` masked, idempotence; reruns: no change, check mode with no change, a token change reloaded with no restart, a cluster name change refused with nothing changed, absent and nothing left), `two-links` (link 1 preferred; its interface down: link 0 carries the data, still quorate; up: link 1 again), `qdevice` (two nodes and a qnetd container: certificates, ffsplit, Flags Qdevice, A,V,NMW, qnetd lists both over TLS with ACK; a rerun imports nothing, no request left on the qnetd host; a left request removed with no other change; an unreachable qnetd host stops the role before anything changes), `qdevice-lms` (three nodes, lms), `failure` (node lists that differ, a duplicate nodeid, `two_node` with a qdevice, control characters; authkeys that differ refused; a node without the authkey receives the cluster's).
 
 ## 🚢 Releases
 

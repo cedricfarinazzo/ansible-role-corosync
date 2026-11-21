@@ -134,6 +134,14 @@
           changed_when: true
           when: inventory_hostname in __corosync_cert_missing and inventory_hostname != corosync_first_host
 
+# Out of the certificate block: also removes a request an earlier signing left
+- name: No certificate request left on the qnetd host
+  ansible.builtin.file:
+    path: "{{ corosync_qnetd_nssdb }}/{{ corosync_cluster_name }}.crq"
+    state: absent
+  delegate_to: "{{ corosync_qdevice_host }}"
+  run_once: true
+
 # A new device section or a reload restarts the qdevice on the new settings
 - name: Restart the quorum device on a changed configuration
   ansible.builtin.systemd_service:
