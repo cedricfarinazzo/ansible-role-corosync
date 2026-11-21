@@ -19,3 +19,4 @@ corosync_qnetd_ca: "{{ corosync_qnetd_nssdb }}/qnetd-cacert.crt"
 corosync_qdevice_ca: /etc/corosync/qdevice/net/qnetd-cacert.crt
 corosync_qdevice_p12: "{{ corosync_qdevice_nssdb }}/qdevice-net-node.p12"
 corosync_qdevice_crq: "{{ corosync_qdevice_nssdb }}/qdevice-net-node.crq"
+corosync_qnetd_defaults: /etc/default/corosync-qnetd

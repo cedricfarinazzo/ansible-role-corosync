@@ -13,6 +13,18 @@
       register: molecule_before
       changed_when: false
 
+    # The qnetd server: its NSS database, the cluster certificate it signed, its options and its start
+    - name: Read the qnetd server's files and start
+      ansible.builtin.shell:
+        cmd: |
+          sha256sum /etc/corosync/qnetd/nssdb/cert9.db /etc/corosync/qnetd/nssdb/key4.db \
+            /etc/corosync/qnetd/nssdb/cluster-{{ corosync_cluster_name }}.crt /etc/default/corosync-qnetd
+          systemctl show -p ActiveEnterTimestampMonotonic corosync-qnetd
+      register: molecule_qnetd_before
+      changed_when: false
+      delegate_to: "{{ groups['qnetd'] | first }}"
+      run_once: true
+
 - name: Reruns
   hosts: nodes
   gather_facts: false
@@ -28,7 +40,7 @@
     - name: No certificate work, nothing changed
       ansible.builtin.assert:
         that:
-          - molecule_run.stdout | regex_findall('changed=0 ') | length == groups['nodes'] | length
+          - molecule_run.stdout | regex_findall('changed=0 ') | length == groups['all'] | length
         fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
       run_once: true
 
@@ -51,7 +63,7 @@
     - name: Only the request removed
       ansible.builtin.assert:
         that:
-          - molecule_run.stdout | regex_findall('changed=0 ') | length == groups['nodes'] | length - 1
+          - molecule_run.stdout | regex_findall('changed=0 ') | length == groups['all'] | length - 1
           - molecule_run.stdout | regex_findall('changed=1 ') | length == 1
         fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
       run_once: true
@@ -86,6 +98,19 @@
       args:
         executable: /bin/bash
       changed_when: false
+
+    - name: The qnetd server untouched by every rerun
+      ansible.builtin.shell:
+        cmd: |
+          now=$(sha256sum /etc/corosync/qnetd/nssdb/cert9.db /etc/corosync/qnetd/nssdb/key4.db \
+            /etc/corosync/qnetd/nssdb/cluster-{{ corosync_cluster_name }}.crt /etc/default/corosync-qnetd
+            systemctl show -p ActiveEnterTimestampMonotonic corosync-qnetd)
+          [ "$now" = "{{ molecule_qnetd_before.stdout }}" ] || { echo "FAIL: changed: $now"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+      delegate_to: "{{ groups['qnetd'] | first }}"
+      run_once: true
 
     - name: Still quorate with the qdevice
       ansible.builtin.include_tasks: ../../shared/qdevice-verify.yml

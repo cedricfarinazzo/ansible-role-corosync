@@ -1,0 +1,187 @@
+---
+# Reruns of the qnetd server: no change and no restart, a stale package cache, new options restart it, absent
+# twice and nothing left, then a server set up beforehand adopted with no change, its NSS database untouched.
+- name: Qnetd server reruns
+  hosts: qnetd
+  gather_facts: false
+  vars:
+    molecule_state_cmd: |
+      sha256sum /etc/corosync/qnetd/nssdb/* /etc/default/corosync-qnetd
+      systemctl show -p ActiveEnterTimestampMonotonic,MainPID corosync-qnetd
+  tasks:
+    - name: Read the NSS database, the options and qnetd's start
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -c
+          - "{{ molecule_state_cmd }}"
+      register: molecule_before
+      changed_when: false
+
+    - name: Package lists older than the role's cache_valid_time
+      ansible.builtin.shell: touch -d '-2 days' /var/lib/apt/periodic/update-success-stamp /var/lib/apt/lists 2>/dev/null; true
+      changed_when: false
+
+    - name: Check mode on the stale cache
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: check mode, stale cache
+        molecule_args:
+          - --check
+        molecule_expect: ok
+
+    - name: Check mode changes nothing
+      ansible.builtin.assert:
+        that: molecule_run.stdout | regex_findall('changed=0 ') | length == 1
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+
+    - name: Rerun with no change
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: no change
+        molecule_args: []
+        molecule_expect: ok
+
+    - name: Nothing changed
+      ansible.builtin.assert:
+        that: molecule_run.stdout | regex_findall('changed=0 ') | length == 1
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+
+    - name: Nothing rewritten, qnetd not restarted
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -c
+          - "{{ molecule_state_cmd }}"
+      register: molecule_after
+      changed_when: false
+      failed_when: molecule_after.stdout != molecule_before.stdout
+
+    - name: New options
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: new options
+        molecule_args:
+          - -e
+          # JSON: a key=value -e splits on spaces
+          - '{"corosync_qnetd_options": "-p 5403 -m 64"}'
+        molecule_expect: ok
+
+    # Two changes: the options file and the restart
+    - name: Two changes
+      ansible.builtin.assert:
+        that: molecule_run.stdout | regex_findall('changed=2 ') | length == 1
+        fail_msg: "{{ molecule_run.stdout_lines[-12:] }}"
+
+    - name: Running on the new options
+      ansible.builtin.include_tasks: ../../shared/qnetd-verify.yml
+      vars:
+        molecule_options: -p 5403 -m 64
+
+    - name: A new process holds the options
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          pid=$(systemctl show -p MainPID --value corosync-qnetd)
+          grep -q "MainPID=$pid\$" <<<"{{ molecule_before.stdout }}" && { echo "FAIL: not restarted"; exit 1; }
+          tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q -- '-m 64' || { echo "FAIL: options not passed"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The NSS database kept
+      ansible.builtin.shell: sha256sum /etc/corosync/qnetd/nssdb/*
+      register: molecule_nss
+      changed_when: false
+      failed_when: molecule_nss.stdout not in molecule_before.stdout
+
+    - name: Absent
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: absent
+        molecule_args:
+          - -e
+          - corosync_state=absent
+        molecule_expect: ok
+
+    - name: Absent again
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: absent again
+        molecule_args:
+          - -e
+          - corosync_state=absent
+        molecule_expect: ok
+
+    - name: The second absent changes nothing
+      ansible.builtin.assert:
+        that: molecule_run.stdout | regex_findall('changed=0 ') | length == 1
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+
+    - name: Nothing left
+      ansible.builtin.shell:
+        cmd: |
+          fail() { echo "FAIL: $*"; exit 1; }
+          ! dpkg -s corosync-qnetd > /dev/null 2>&1 || fail "package installed"
+          [ ! -e /etc/corosync/qnetd ] || fail "/etc/corosync/qnetd left"
+          [ ! -e /etc/default/corosync-qnetd ] || fail "options file left"
+          ! systemctl is-active -q corosync-qnetd.service || fail "running"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # As by hand or by another tool: the package's database, the same options file, qnetd running
+    - name: A qnetd server set up beforehand
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          apt-get install -y -q corosync-qnetd > /dev/null
+          printf '# Ansible managed\nCOROSYNC_QNETD_OPTIONS=""\n' > /etc/default/corosync-qnetd
+          chmod 0644 /etc/default/corosync-qnetd
+          systemctl enable -q --now corosync-qnetd.service
+      changed_when: true
+
+    - name: Read the adopted server
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -c
+          - "{{ molecule_state_cmd }}"
+      register: molecule_adopt_before
+      changed_when: false
+
+    - name: Check mode on the adopted server
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: adopt, check mode
+        molecule_args:
+          - --check
+          - --diff
+        molecule_expect: ok
+
+    - name: Check mode shows no change
+      ansible.builtin.assert:
+        that: molecule_run.stdout | regex_findall('changed=0 ') | length == 1
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+
+    - name: Run on the adopted server
+      ansible.builtin.include_tasks: ../../shared/recap.yml
+      vars:
+        molecule_label: adopt
+        molecule_args: []
+        molecule_expect: ok
+
+    - name: Adopted with no change
+      ansible.builtin.assert:
+        that: molecule_run.stdout | regex_findall('changed=0 ') | length == 1
+        fail_msg: "{{ molecule_run.stdout_lines[-6:] }}"
+
+    - name: Its NSS database and options untouched, qnetd not restarted
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -c
+          - "{{ molecule_state_cmd }}"
+      register: molecule_adopt_after
+      changed_when: false
+      failed_when: molecule_adopt_after.stdout != molecule_adopt_before.stdout

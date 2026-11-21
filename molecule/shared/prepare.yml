@@ -17,17 +17,3 @@
           - procps
         update_cache: true
         cache_valid_time: 3600
-
-- name: The qnetd server
-  hosts: qnetd
-  tasks:
-    - name: Corosync-qnetd is installed and running
-      ansible.builtin.apt:
-        name: corosync-qnetd
-        state: present
-
-    - name: Corosync-qnetd runs
-      ansible.builtin.systemd_service:
-        name: corosync-qnetd.service
-        state: started
-        enabled: true

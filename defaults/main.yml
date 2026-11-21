@@ -2,6 +2,11 @@
 # present: install, configure and run Corosync; absent: stop, purge, remove config, authkey and certificates
 corosync_state: present
 
+# node: a cluster node; qnetd: the corosync-qnetd server a quorum device connects to (package, options, service)
+corosync_mode: node
+# qnetd mode: options of corosync-qnetd (/etc/default/corosync-qnetd), one line, e.g. "-l 192.0.2.10"
+corosync_qnetd_options: ""
+
 # Cluster name: letters, digits, "_" and "-", at most 32 characters (also the qdevice certificate's name)
 corosync_cluster_name: ""
 

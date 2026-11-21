@@ -3,9 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Ansible Galaxy](https://img.shields.io/badge/Ansible%20Galaxy-cedricfarinazzo.corosync-blue)](https://galaxy.ansible.com/cedricfarinazzo/corosync)
 
-> **[Corosync](https://corosync.github.io/corosync/) 3 cluster membership and quorum over knet links, one shared authkey, and an optional quorum device (corosync-qdevice) whose certificates the role signs on the qnetd host.**
+> **[Corosync](https://corosync.github.io/corosync/) 3 cluster membership and quorum over knet links, one shared authkey, and an optional quorum device (corosync-qdevice) whose certificates the role signs on the qnetd host; in qnetd mode, the corosync-qnetd server itself.**
 
-The role renders `corosync.conf` itself from a template (no `pcs`, `pcsd` masked), on every node of the cluster in one play. It is what Pacemaker runs on; Pacemaker itself is out of its scope.
+The role renders `corosync.conf` itself from a template (no `pcs`, `pcsd` masked), on every node of the cluster in one play. It is what Pacemaker runs on; Pacemaker itself is out of its scope. With `corosync_mode: qnetd` on the qnetd host, the same role sets up the quorum device's server, so one role builds a qdevice cluster end to end.
 
 ## 🚀 Quick Start
 
@@ -43,12 +43,13 @@ The role will:
 - ✅ Write `corosync.conf`; restart corosync on a node still on the package's default configuration (Debian's postinst starts it at install); reload every node with one `corosync-cfgtool -R` for a change Corosync can reload; refuse a change it reads at start only (cluster name, crypto, transport, link ports) on a running cluster, with nothing changed
 - ✅ With a quorum device: on every node an NSS database trusting the qnetd CA; the first node's certificate request signed on the qnetd host, imported on the first node and exported as PKCS#12, imported on the other nodes; a node holding the cluster certificate is skipped; the request is removed from the qnetd host after signing, also one an earlier run left
 - ✅ Enable and start `corosync` and `corosync-qdevice`
+- ✅ In qnetd mode: install `corosync-qnetd` (its package creates the CA and the NSS database, which the role never touches), write its options to `/etc/default/corosync-qnetd`, restart it on new options only, enable and start it
 
 ## 📋 Requirements
 
 - Ansible 2.15+, `become: true`
 - Every node of `corosync_nodes` in the play (it renders one nodelist on all of them); never `--limit` part of a cluster
-- With a quorum device: `corosync_qdevice_host` in the inventory with `corosync-qnetd` installed (its package creates the CA and the NSS database in `/etc/corosync/qnetd/nssdb`), reachable by Ansible and by the nodes on `corosync_qdevice_port` (TCP 5403)
+- With a quorum device: `corosync_qdevice_host` in the inventory with `corosync-qnetd` installed (this role in qnetd mode, or set up beforehand; its package creates the CA and the NSS database in `/etc/corosync/qnetd/nssdb`), reachable by Ansible and by the nodes on `corosync_qdevice_port` (TCP 5403)
 - Firewall: knet on UDP `mcastport` (5405 by default) of every link, between every pair of nodes; the role opens no port
 
 ### Supported Distributions
@@ -59,7 +60,7 @@ The role will:
 | Ubuntu       | 24.04 (noble) | ✅ Tested |
 | Ubuntu       | 26.04 (resolute) | ✅ Tested |
 
-The scenarios beyond the default one run on Debian 13.
+The scenarios beyond the default one run on Debian 13; the `qnetd` scenario also on Debian 13 arm64, as on a Raspberry Pi (Raspberry Pi OS is Debian 13 based).
 
 ## ⚙️ Configuration
 
@@ -99,7 +100,25 @@ corosync_qdevice_tie_breaker: lowest # lowest, highest or a nodeid
 corosync_qdevice_tls: "on"         # on, off or required
 ```
 
-The qdevice is one more vote: two nodes and a qdevice make three votes, majority two. The role signs the cluster certificate on the qnetd host (`corosync-qnetd-certutil -s`); the qnetd daemon itself is yours to install and run.
+The qdevice is one more vote: two nodes and a qdevice make three votes, majority two. The role signs the cluster certificate on the qnetd host (`corosync-qnetd-certutil -s`).
+
+### Qnetd server
+
+```yaml
+corosync_mode: node                # qnetd: this host is the corosync-qnetd server
+corosync_qnetd_options: ""         # qnetd mode: COROSYNC_QNETD_OPTIONS, e.g. "-l 192.0.2.10"; [A-Za-z0-9 ._:/=,+-]
+```
+
+Set `corosync_mode: qnetd` on the qnetd host and run it in the same play as the nodes, or in an earlier one: in one play the server is set up before any node reads its CA, and a check-mode run on a fresh qnetd host does not stop on the missing CA. The qnetd mode needs none of the cluster variables. A server already running (set up by hand or by another tool) is adopted: its CA, NSS database and signed certificates are kept, and it restarts only when the options file changes. The role opens no port: allow TCP `corosync_qdevice_port` from the nodes.
+
+```yaml
+- hosts: qnetd
+  become: true
+  roles:
+    - role: cedricfarinazzo.corosync
+      vars:
+        corosync_mode: qnetd
+```
 
 ### Start-only settings
 
@@ -147,6 +166,8 @@ corosync-qnetd-tool -l -v -c <cluster>   # on the qnetd host: every node, TLS ac
 
 `corosync_state: absent` stops and disables `corosync-qdevice` and `corosync`, purges the packages, removes `corosync.conf`, the authkey, the stamp, `/etc/corosync/qdevice`, `/var/lib/corosync` and the `pcsd` mask. It leaves `/etc/corosync/qnetd` (a qnetd server) alone. On the qnetd host, `cluster-<name>.crt` stays.
 
+In qnetd mode, `corosync_state: absent` stops, disables and purges `corosync-qnetd` and removes `/etc/default/corosync-qnetd` and `/etc/corosync/qnetd`: its CA and every cluster certificate it signed, so each cluster's qdevice needs new certificates afterwards.
+
 ## 🧪 Testing
 
 ```bash
@@ -154,12 +175,13 @@ corosync-qnetd-tool -l -v -c <cluster>   # on the qnetd host: every node, TLS ac
 ./run-tests.sh all                 # every distribution, in parallel
 ./run-tests.sh -s two-links debian13
 ./run-tests.sh -s qdevice debian13
+./run-tests.sh -s qnetd debian13
 ./run-tests.sh -s qdevice-lms debian13
 ./run-tests.sh -s failure debian13
 tests/validate.test.sh             # the input checks, on localhost
 ```
 
-Scenarios: `default` (three nodes: check mode on a fresh host, converge, quorate on the role's cluster, not the package's, one authkey 0400, crypto on, `pcsd` masked, idempotence; reruns: no change, check mode with no change, a token change reloaded with no restart, a cluster name change refused with nothing changed, absent and nothing left), `two-links` (link 1 preferred; its interface down: link 0 carries the data, still quorate; up: link 1 again), `qdevice` (two nodes and a qnetd container: certificates, ffsplit, Flags Qdevice, A,V,NMW, qnetd lists both over TLS with ACK; a rerun imports nothing, no request left on the qnetd host; a left request removed with no other change; an unreachable qnetd host stops the role before anything changes), `qdevice-lms` (three nodes, lms), `failure` (node lists that differ, a duplicate nodeid, `two_node` with a qdevice, control characters; authkeys that differ refused; a node without the authkey receives the cluster's).
+Scenarios: `default` (three nodes: check mode on a fresh host, converge, quorate on the role's cluster, not the package's, one authkey 0400, crypto on, `pcsd` masked, idempotence; reruns: no change, check mode with no change, a token change reloaded with no restart, a cluster name change refused with nothing changed, absent and nothing left), `two-links` (link 1 preferred; its interface down: link 0 carries the data, still quorate; up: link 1 again), `qdevice` (two nodes and a qnetd container, all three from the role in one play, check mode first: certificates, ffsplit, Flags Qdevice, A,V,NMW, qnetd lists both over TLS with ACK; a rerun imports nothing, no request left on the qnetd host; a left request removed with no other change; an unreachable qnetd host stops the role before anything changes; the qnetd server's NSS database, options and start untouched by every rerun), `qdevice-lms` (three nodes, lms), `failure` (node lists that differ, a duplicate nodeid, `two_node` with a qdevice, control characters; authkeys that differ refused; a node without the authkey receives the cluster's), `qnetd` (the server alone: check mode on a fresh host, converge, listening on 5403, idempotence; check mode and a rerun on a stale package cache change nothing; new options restart it on them; absent twice, nothing left; a server set up beforehand adopted with no change, no restart, its NSS database untouched).
 
 ## 🚢 Releases
 
@@ -168,7 +190,7 @@ Once CI passes on `main`, [semantic-release](https://github.com/semantic-release
 ## 📦 Dependencies
 
 - ✅ **Ansible Core Modules** (built-in); no collection
-- ✅ **OS packages** `corosync`, `corosync-qdevice` (quorum device); `corosync-qnetd` on the qnetd host, set up beforehand
+- ✅ **OS packages** `corosync`, `corosync-qdevice` (quorum device); `corosync-qnetd` on the qnetd host (qnetd mode, or set up beforehand)
 
 ## 👥 Authors & Contributors
 

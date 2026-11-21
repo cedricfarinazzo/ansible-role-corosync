@@ -3,7 +3,7 @@ galaxy_info:
   role_name: corosync
   namespace: cedricfarinazzo
   author: Cédric Farinazzo
-  description: Corosync 3 cluster membership and quorum over knet links, one shared authkey, and a quorum device whose certificates the role signs on the qnetd host
+  description: Corosync 3 cluster membership and quorum over knet links, one shared authkey, a quorum device whose certificates the role signs on the qnetd host, and the corosync-qnetd server itself
 
   license: MIT
 
@@ -23,6 +23,7 @@ galaxy_info:
     - cluster
     - quorum
     - qdevice
+    - qnetd
     - knet
     - ha
     - system

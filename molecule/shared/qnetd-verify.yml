@@ -1,0 +1,21 @@
+---
+# Tasks: corosync-qnetd enabled, running and listening on 5403, its CA and NSS database there, its options file
+# exactly the two lines the role writes (molecule_options: the expected options).
+- name: Qnetd runs on the role's options
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      fail() { echo "FAIL: $*"; exit 1; }
+      systemctl is-enabled -q corosync-qnetd.service || fail "not enabled"
+      systemctl is-active -q corosync-qnetd.service || fail "not running"
+      for i in $(seq 15); do ss -Hltn 'sport = :5403' | grep -q . && break; sleep 1; done
+      ss -Hltn 'sport = :5403' | grep -q . || fail "nothing listens on 5403"
+      corosync-qnetd-tool -s > /dev/null || fail "corosync-qnetd-tool -s"
+      grep -q -- '-----BEGIN CERTIFICATE-----' /etc/corosync/qnetd/nssdb/qnetd-cacert.crt || fail "no CA"
+      [ -s /etc/corosync/qnetd/nssdb/cert9.db ] || fail "no NSS database"
+      printf '# Ansible managed\nCOROSYNC_QNETD_OPTIONS="%s"\n' '{{ molecule_options }}' | cmp -s - /etc/default/corosync-qnetd \
+        || fail "options file: $(cat -A /etc/default/corosync-qnetd)"
+      [ "$(stat -c '%a %U %G' /etc/default/corosync-qnetd)" = "644 root root" ] || fail "options file mode"
+  args:
+    executable: /bin/bash
+  changed_when: false

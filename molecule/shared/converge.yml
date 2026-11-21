@@ -1,5 +1,6 @@
 ---
+# Nodes and, in the qdevice scenarios, the qnetd host (corosync_mode: qnetd): one play, one role
 - name: Converge
-  hosts: nodes
+  hosts: all
   roles:
     - role: ../../../ansible-role-corosync

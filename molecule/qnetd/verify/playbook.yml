@@ -1,0 +1,9 @@
+---
+- name: Verify the qnetd server
+  hosts: qnetd
+  gather_facts: false
+  tasks:
+    - name: The qnetd server
+      ansible.builtin.include_tasks: ../../shared/qnetd-verify.yml
+      vars:
+        molecule_options: ""

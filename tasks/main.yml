@@ -2,8 +2,13 @@
 - name: Validate inputs
   ansible.builtin.import_tasks: validate.yml
 
+# Before the nodes' tasks: in one play, the server exists and runs before a node reads its CA
+- name: Qnetd server
+  ansible.builtin.include_tasks: qnetd.yml
+  when: corosync_mode == 'qnetd' and corosync_state == 'present'
+
 - name: Corosync
-  when: corosync_state == 'present'
+  when: corosync_mode == 'node' and corosync_state == 'present'
   block:
     # Before any package or restart: an unreachable qnetd host stops the role with the cluster untouched
     - name: Quorum device CA
@@ -29,4 +34,8 @@
 
 - name: Remove Corosync
   ansible.builtin.include_tasks: absent.yml
-  when: corosync_state == 'absent'
+  when: corosync_mode == 'node' and corosync_state == 'absent'
+
+- name: Remove the qnetd server
+  ansible.builtin.include_tasks: qnetd_absent.yml
+  when: corosync_mode == 'qnetd' and corosync_state == 'absent'

@@ -1,0 +1,39 @@
+---
+# The corosync-qnetd server. Its package creates the CA and the NSS database; this mode never touches them
+# (the node mode signs the cluster certificate there). The options file is the one file it writes.
+# A package and a cache together: a stale cache reports no change once the package is there, check mode too
+- name: Corosync-qnetd is installed
+  ansible.builtin.apt:
+    name: corosync-qnetd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Options of corosync-qnetd
+  ansible.builtin.template:
+    src: corosync-qnetd.j2
+    dest: "{{ corosync_qnetd_defaults }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: __corosync_qnetd_options_result
+
+- name: Read the services
+  ansible.builtin.service_facts:
+
+# Inline, not a handler: the nodes connect later in the same play, to the server on its new options
+- name: Restart corosync-qnetd on new options
+  ansible.builtin.systemd_service:
+    name: corosync-qnetd.service
+    state: restarted
+  when:
+    - __corosync_qnetd_options_result is changed
+    - not ansible_check_mode or 'corosync-qnetd.service' in ansible_facts.services
+
+- name: Corosync-qnetd enabled and running
+  ansible.builtin.systemd_service:
+    name: corosync-qnetd.service
+    enabled: true
+    state: started
+  # Check mode on a fresh host: the package, so the unit, is not there yet
+  when: not ansible_check_mode or 'corosync-qnetd.service' in ansible_facts.services

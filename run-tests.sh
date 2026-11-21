@@ -11,9 +11,10 @@ show_usage() {
     echo "Run a Molecule scenario of the corosync role (default: the default scenario on debian13)."
     echo "Scenarios: default (three nodes, one link: check mode, idempotence, authkey kept, reload, start-only change refused, absent),"
     echo "two-links (two nodes on two networks: link priorities, link 1 down and up),"
-    echo "qdevice (two nodes and a qnetd host: certificates signed there, ffsplit, unreachable qnetd host),"
+    echo "qdevice (two nodes and a qnetd host the role sets up: certificates signed there, ffsplit, unreachable qnetd host),"
     echo "qdevice-lms (three nodes and a qnetd host, last man standing),"
-    echo "failure (bad inputs, node lists that differ, authkeys that differ, a node without the authkey)."
+    echo "failure (bad inputs, node lists that differ, authkeys that differ, a node without the authkey),"
+    echo "qnetd (the qnetd server alone: options, restart on new options, stale cache, absent, a server set up beforehand)."
     echo "Several distributions, or 'all', run in parallel; each writes .molecule-logs/<distro>.log."
     echo
     echo "Supported: ${SUPPORTED// /, }"
